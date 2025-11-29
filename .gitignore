@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Whisper models (downloaded automatically)
+*.pt
+
+# Audio files (can be large)
+samples/*.mp3
+samples/*.wav
+samples/*.m4a
+samples/*.mp4
+samples/*.flac
+samples/*.ogg
+samples/*.wma
+
+# Keep samples directory but ignore its contents
+!samples/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+# OpenAI Whisper for GPU
+openai-whisper
+torch
+torchaudio
+
+# Optional but recommended
+numpy
+ffmpeg-python
