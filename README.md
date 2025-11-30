@@ -1,4 +1,4 @@
-# SuperWhisper-like Tool
+# SuperWhisper
 
 faster-whisperを使用した、高速・高精度な常駐型音声入力ツールです。
 ホットキーを押すだけで録音を開始し、文字起こし結果をアクティブなウィンドウに自動入力します。
@@ -7,109 +7,143 @@ faster-whisperを使用した、高速・高精度な常駐型音声入力ツー
 
 - **⚡ 高速処理**: faster-whisperによる最適化で、従来比5-10倍の高速化
 - **🎯 高精度**: large-v3などの最新モデルに対応
+- **🖥️ モダンなUI**: Dynamic Island風オーバーレイとシステムトレイ統合
 - **🧠 スマートなVRAM管理**: 使用後に自動でメモリ解放、必要時に自動プリロード
 - **🎙️ ハルシネーション対策**: VADとno_speech確率フィルタで無音時の誤認識を防止
-- **⚙️ 完全カスタマイズ可能**: 全パラメータを設定ファイルで調整可能
-- **🔄 再起動不要**: `restart` コマンドで設定変更を即座に反映
+- **⚙️ GUIで設定変更**: 設定ウィンドウから各種パラメータを調整可能
+- **🔄 ホットリロード**: 設定変更が即座に反映（再起動不要）
 - **⌨️ グローバルホットキー**: どのアプリを使っていても、設定したキーで起動
+
+## 必要環境
+
+- **CUDA対応GPU**: NVIDIA GPU必須（CUDAが必要）
+- **Python 3.8+**
+- **ffmpeg**
 
 ## インストール
 
-1. 仮想環境を有効化（推奨）:
+1. リポジトリをクローン:
    ```bash
-   .\venv\Scripts\Activate.ps1
+   git clone https://github.com/Tomato-1101/whi.git
+   cd whi
    ```
 
-2. 必要なライブラリをインストールします:
+2. 仮想環境を作成・有効化:
+   ```bash
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1  # Windows PowerShell
+   ```
+
+3. 依存関係をインストール:
    ```bash
    pip install -r requirements.txt
    ```
-   ※ GPUを使用する場合は、PyTorchのCUDA対応版がインストールされていることを確認してください。
 
-3. `ffmpeg` がシステムにインストールされている必要があります。
+4. `ffmpeg` がシステムにインストールされていることを確認してください。
 
 ## 使い方
 
-1. アプリケーションを起動します:
-   ```bash
-   python src/main.py
-   ```
-   または
-   ```bash
-   .\venv\Scripts\python.exe src/main.py
-   ```
-   初回起動時はモデルのダウンロードが行われるため、時間がかかります。
+### 開発モード
 
-2. 起動メッセージが表示されたら準備完了です:
-   ```
-   Ready! Press '<ctrl>+<space>' to hold for recording.
-   Type 'restart' to reload the application, or 'quit' to exit.
-   ```
+```bash
+python run.py
+```
 
-3. **ホットキー**（デフォルト: Ctrl+Space）を**押し続けている間**録音されます（holdモード）:
-   - 押した瞬間にモデルのロードが開始されます（プリロード）
-   - 話している間、キープを押し続けます
-   - キーを離すと録音が停止し、文字起こしが開始されます
+### EXEビルド
 
-4. 文字起こし結果がアクティブなウィンドウに自動入力されます。
+```bash
+pyinstaller SuperWhisperLike.spec
+```
 
-5. 設定を変更した場合:
-   - コンソールに `restart` と入力して Enter
-   - アプリが自動的に再起動され、新しい設定が適用されます
+ビルドされたEXEは `dist/SuperWhisperLike.exe` に生成されます。
+
+### 起動後の操作
+
+1. システムトレイにアイコンが表示されます
+2. **ホットキー**（デフォルト: `Ctrl+Space`）を押している間録音されます
+3. キーを離すと自動的に文字起こしが開始
+4. 結果がアクティブなウィンドウに自動入力されます
+
+### UI
+
+- **オーバーレイ**: 画面上部にDynamic Island風の状態表示
+  - 録音中: `Listening...`（赤いパルスエフェクト）
+  - 処理中: `Thinking...`
+- **システムトレイ**: 右クリックでメニュー表示
+  - クリック: 設定ウィンドウを開く
+  - Quit: アプリ終了
 
 ## 設定
 
-`settings.yaml` を編集してカスタマイズできます。
+### GUIから設定
 
-### 基本設定
+システムトレイアイコンをクリックして設定ウィンドウを開きます。
+
+#### General タブ
+- **Hotkey**: 起動キー（例: `<ctrl>+<space>`, `<f2>`）
+- **Trigger Mode**: `hold`（押している間録音）/ `toggle`（押して開始/停止）
+
+#### Model タブ
+- **Model Size**: tiny, base, small, medium, large, large-v2, large-v3, distil-large-v2
+- **Compute Type**: float16, int8_float16, int8
+- **Language**: 言語コード（ja, en など）
+
+#### Advanced タブ
+- **VAD Filter**: 音声区間検出の有効/無効
+- **Release VRAM after**: メモリ解放までの秒数
+
+### 設定ファイル
+
+`settings.yaml` を直接編集することも可能です:
 
 ```yaml
 # ホットキー設定
-hotkey: '<ctrl>+<space>'  # 起動キー (例: '<f2>', '<ctrl>+<space>')
-hotkey_mode: 'hold'       # 'toggle' (押して開始/停止) or 'hold' (押している間録音)
+hotkey: '<ctrl>+<space>'
+hotkey_mode: 'hold'
 
 # モデル設定
-model_size: 'large-v3'    # モデル: tiny, base, small, medium, large, large-v2, large-v3
-device: 'cuda'            # 'cuda' (GPU) または 'cpu'
-compute_type: 'float16'   # 計算精度: 'float16', 'int8', 'float32'
-language: 'ja'            # 言語コード (ja, en など、空白で自動検出)
+model_size: 'large-v3'
+compute_type: 'float16'
+language: 'ja'
+model_cache_dir: 'D:/whisper_cache'  # モデルキャッシュ場所
 
 # VRAM管理
-release_memory_delay: 100 # メモリ解放までの秒数 (0で常駐、100秒推奨)
+release_memory_delay: 7  # 秒
+
+# 高度な設定
+vad_filter: true
+vad_min_silence_duration_ms: 500
+condition_on_previous_text: false
+no_speech_threshold: 0.6
+log_prob_threshold: -1.0
+no_speech_prob_cutoff: 0.7
+beam_size: 5
 ```
 
-### 高度な設定（ハルシネーション対策）
+## プロジェクト構造
 
-```yaml
-# VAD (音声区間検出)
-vad_filter: true                      # VADを有効化
-vad_min_silence_duration_ms: 500      # 無音とみなす最小時間（ミリ秒）
-
-# ハルシネーション防止
-condition_on_previous_text: false     # 前の文脈への依存を無効化（推奨）
-no_speech_threshold: 0.6              # 無音判定の閾値 (0.0-1.0)
-log_prob_threshold: -1.0              # 確信度の閾値（負の値）
-no_speech_prob_cutoff: 0.7            # セグメントの無音確率カットオフ
-beam_size: 5                          # ビームサーチのサイズ
 ```
-
-## コマンド
-
-アプリ起動中に以下のコマンドが使用できます:
-
-- `restart`: アプリを再起動（設定変更を反映）
-- `quit`: アプリを終了
-
-## VRAM最適化について
-
-このツールは以下のメモリ管理を行います:
-
-1. **起動時**: モデルは未ロード（VRAM使用量: 最小）
-2. **録音開始時**: バックグラウンドでモデルをロード開始（プリロード）
-3. **文字起こし時**: モデル使用（VRAM使用量: 最大）
-4. **完了後**: 設定時間（例: 100秒）経過後に自動でメモリ解放
-
-連続使用時は再ロードせず、待ち時間なしで高速に動作します。
+src/
+├── __init__.py            # パッケージ定義
+├── app.py                 # メインアプリケーション
+├── main.py                # エントリーポイント
+├── config/                # 設定関連
+│   ├── types.py           # 型定義（Enum, Dataclass）
+│   ├── constants.py       # 定数
+│   └── config_manager.py  # 設定管理
+├── core/                  # コアロジック
+│   ├── audio_recorder.py  # 音声録音
+│   ├── transcriber.py     # 音声認識
+│   └── input_handler.py   # テキスト入力
+├── ui/                    # UI関連
+│   ├── overlay.py         # オーバーレイ
+│   ├── settings_window.py # 設定ウィンドウ
+│   └── system_tray.py     # システムトレイ
+└── utils/                 # ユーティリティ
+    └── logger.py          # ロギング
+run.py                     # 起動スクリプト
+settings.yaml              # 設定ファイル
+```
 
 ## トラブルシューティング
 
@@ -132,9 +166,17 @@ beam_size: 5                          # ビームサーチのサイズ
 - `compute_type` を `int8` に変更
 - `release_memory_delay` を短く設定
 
+### WinError 1314
+- `model_cache_dir` を指定して、シンボリックリンク問題を回避
+
 ## 技術スタック
 
 - **faster-whisper**: 高速な音声認識エンジン
-- **PyTorch**: 深層学習フレームワーク
+- **PyTorch (CUDA)**: GPU加速
+- **PyQt6**: モダンなGUIフレームワーク
 - **pynput**: グローバルホットキー管理
 - **sounddevice**: オーディオ録音
+
+## ライセンス
+
+MIT License

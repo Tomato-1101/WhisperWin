@@ -1,0 +1,26 @@
+2025-12-01 02:02:55,536 - src.app - INFO - Initializing SuperWhisper...
+2025-12-01 02:02:55,601 - src.app - INFO - App Ready.
+2025-12-01 02:02:58,851 - src.app - INFO - Start Recording
+2025-12-01 02:02:58,861 - src.core.transcriber - INFO - Loading faster-whisper model 'large-v3' on cuda (float16)...
+2025-12-01 02:02:59,167 - src.core.transcriber - INFO - Using model cache directory: D:/whisper_cache
+2025-12-01 02:02:59,186 - src.core.audio_recorder - INFO - Recording started...
+2025-12-01 02:03:02,316 - src.app - INFO - Stop Recording
+2025-12-01 02:03:02,338 - src.core.audio_recorder - INFO - Recording stopped.
+2025-12-01 02:03:02,842 - src.core.transcriber - INFO - Model loaded successfully.
+2025-12-01 02:03:02,842 - faster_whisper - INFO - Processing audio with duration 00:03.094
+2025-12-01 02:03:02,924 - faster_whisper - INFO - VAD filter removed 00:00.000 of audio
+2025-12-01 02:03:03,940 - src.app - INFO - Result: ノーズモデルを 投稿します
+2025-12-01 02:04:03,942 - src.core.transcriber - INFO - Unloading model to release memory...
+2025-12-01 02:04:04,026 - src.core.transcriber - INFO - Model unloaded.
+2025-12-01 02:04:47,039 - src.app - INFO - Start Recording
+2025-12-01 02:04:47,042 - src.core.transcriber - INFO - Loading faster-whisper model 'large-v3' on cuda (float16)...
+2025-12-01 02:04:47,049 - src.core.transcriber - INFO - Using model cache directory: D:/whisper_cache
+2025-12-01 02:04:47,064 - src.core.audio_recorder - INFO - Recording started...
+2025-12-01 02:04:49,710 - src.app - INFO - Stop Recording
+2025-12-01 02:04:49,744 - src.core.audio_recorder - INFO - Recording stopped.
+2025-12-01 02:04:50,486 - src.core.transcriber - INFO - Model loaded successfully.
+2025-12-01 02:04:50,486 - faster_whisper - INFO - Processing audio with duration 00:02.626
+2025-12-01 02:04:50,492 - faster_whisper - INFO - VAD filter removed 00:00.336 of audio
+2025-12-01 02:04:51,253 - src.app - INFO - Result: GitHubにプッシュして
+2025-12-01 02:05:51,254 - src.core.transcriber - INFO - Unloading model to release memory...
+2025-12-01 02:05:51,316 - src.core.transcriber - INFO - Model unloaded.

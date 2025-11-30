@@ -11,3 +11,7 @@ scipy
 
 # Optional but recommended
 ffmpeg-python
+
+# GUI & Packaging
+PyQt6
+pyinstaller
