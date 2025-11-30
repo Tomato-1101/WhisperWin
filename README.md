@@ -52,10 +52,11 @@ python run.py
 ### EXEビルド
 
 ```bash
-pyinstaller SuperWhisperLike.spec
+pyinstaller SuperWhisperLike.spec --clean --noconfirm
 ```
 
-ビルドされたEXEは `dist/SuperWhisperLike.exe` に生成されます。
+ビルドされたEXEは `dist/SuperWhisperLike/SuperWhisperLike.exe` に生成されます。
+（起動高速化のため、単一ファイルではなくフォルダ形式で出力されます）
 
 ### 起動後の操作
 

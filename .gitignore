@@ -33,5 +33,11 @@ samples/*.wma
 .DS_Store
 Thumbs.db
 
+# PyInstaller
+build/
 dist/
-bulid/
+*.spec
+!SuperWhisperLike.spec
+
+# Logs
+*_log.txt
