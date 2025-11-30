@@ -144,10 +144,38 @@ class DynamicIslandOverlay(QMainWindow):
         elif state == AppState.TRANSCRIBING:
             self._set_transcribing_state()
 
+    def show_temporary_message(self, message: str, duration_ms: int = 2000, is_error: bool = False) -> None:
+        """
+        Show a temporary message on the overlay.
+        
+        Args:
+            message: Text to display.
+            duration_ms: Duration in milliseconds.
+            is_error: Whether this is an error message (displayed in red).
+        """
+        self.show()
+        self._animate_resize(OVERLAY_EXPANDED_WIDTH, OVERLAY_EXPANDED_HEIGHT)
+        self._status_label.setText(message)
+        
+        # Change text color for errors
+        if is_error:
+            self._status_label.setStyleSheet("color: #FF3232; font-weight: bold; font-family: 'Segoe UI', sans-serif;")
+        else:
+            self._status_label.setStyleSheet("color: white; font-weight: bold; font-family: 'Segoe UI', sans-serif;")
+            
+        self._status_label.show()
+        self._pulse_timer.stop()
+        self.update()
+        
+        # Schedule return to idle
+        QTimer.singleShot(duration_ms, lambda: self.set_state(AppState.IDLE))
+
     def _set_idle_state(self) -> None:
         """Configure idle state."""
         self._animate_resize(OVERLAY_BASE_WIDTH, OVERLAY_BASE_HEIGHT)
         self._status_label.setText("Ready")
+        # Reset style
+        self._status_label.setStyleSheet("color: white; font-weight: bold; font-family: 'Segoe UI', sans-serif;")
         self._status_label.hide()
         self._pulse_timer.stop()
         self.hide()

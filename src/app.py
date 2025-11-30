@@ -133,11 +133,18 @@ class SuperWhisperApp(QObject):
 
     def _handle_transcription_result(self, text: str) -> None:
         """Handle transcription result."""
-        if text:
-            logger.info(f"Result: {text}")
-            self._input_handler.insert_text(text)
-        else:
+        if not text:
             logger.info("No text detected.")
+            self._overlay.show_temporary_message("No Speech")
+            return
+
+        if text.startswith("Error:"):
+            logger.error(f"Transcription failed: {text}")
+            self._overlay.show_temporary_message("Error", is_error=True)
+            return
+
+        logger.info(f"Result: {text}")
+        self._input_handler.insert_text(text)
         
         # Return to idle after a short delay
         QTimer.singleShot(1000, lambda: self.status_changed.emit("idle"))
