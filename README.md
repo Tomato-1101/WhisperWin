@@ -1,4 +1,4 @@
-# SuperWhisper
+# WhisperWin
 
 faster-whisperを使用した、高速・高精度な常駐型音声入力ツールです。
 ホットキーを押すだけで録音を開始し、文字起こし結果をアクティブなウィンドウに自動入力します。
@@ -177,7 +177,3 @@ settings.yaml              # 設定ファイル
 - **PyQt6**: モダンなGUIフレームワーク
 - **pynput**: グローバルホットキー管理
 - **sounddevice**: オーディオ録音
-
-## ライセンス
-
-MIT License
