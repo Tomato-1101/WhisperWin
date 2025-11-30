@@ -1,5 +1,6 @@
 import time
 import sys
+import os
 import threading
 from pynput import keyboard
 from config import ConfigManager
@@ -19,7 +20,18 @@ class SuperWhisperApp:
         self.transcriber = Transcriber(
             model_size=self.config.get("model_size"),
             device=self.config.get("device"),
-            language=self.config.get("language")
+            compute_type=self.config.get("compute_type", "float16"),
+            language=self.config.get("language"),
+            release_memory_delay=self.config.get("release_memory_delay", 300),
+            cpu_threads=self.config.get("cpu_threads", 4),
+            # Advanced settings
+            vad_filter=self.config.get("vad_filter", True),
+            vad_min_silence_duration_ms=self.config.get("vad_min_silence_duration_ms", 500),
+            condition_on_previous_text=self.config.get("condition_on_previous_text", False),
+            no_speech_threshold=self.config.get("no_speech_threshold", 0.6),
+            log_prob_threshold=self.config.get("log_prob_threshold", -1.0),
+            no_speech_prob_cutoff=self.config.get("no_speech_prob_cutoff", 0.7),
+            beam_size=self.config.get("beam_size", 5)
         )
         self.input_handler = InputHandler()
         
@@ -74,6 +86,10 @@ class SuperWhisperApp:
     def start_recording(self):
         print("\n[Start Recording]")
         self.is_recording = True
+        
+        # Preload model in background to reduce latency
+        threading.Thread(target=self.transcriber.load_model, daemon=True).start()
+        
         self.recorder.start_recording()
 
     def stop_and_transcribe(self):
@@ -96,6 +112,10 @@ class SuperWhisperApp:
             print("No text detected.")
 
     def run(self):
+        # Start a thread to listen for console commands
+        console_thread = threading.Thread(target=self.console_listener, daemon=True)
+        console_thread.start()
+
         if self.hotkey_mode == 'hold':
             # Hold mode: track key presses to detect combination
             listener = keyboard.Listener(
@@ -116,6 +136,34 @@ class SuperWhisperApp:
             except Exception as e:
                 print(f"Error with hotkey listener: {e}")
                 print("Please check your hotkey configuration in settings.yaml")
+
+    def console_listener(self):
+        """Listen for console commands."""
+        print("Type 'restart' to reload the application, or 'quit' to exit.")
+        while True:
+            try:
+                cmd = sys.stdin.readline().strip().lower()
+                if cmd == 'restart':
+                    print("Restarting application...")
+                    self.restart_app()
+                elif cmd == 'quit':
+                    print("Exiting...")
+                    os._exit(0)
+            except Exception:
+                pass
+
+    def restart_app(self):
+        """Restart the current python process."""
+        try:
+            # Clean up resources
+            if self.transcriber:
+                self.transcriber.unload_model()
+            
+            # Restart process
+            python = sys.executable
+            os.execl(python, python, *sys.argv)
+        except Exception as e:
+            print(f"Error restarting: {e}")
 
     def handle_key_press(self, key):
         """Handle key press for hold mode."""

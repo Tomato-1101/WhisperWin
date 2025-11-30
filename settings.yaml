@@ -7,13 +7,38 @@ hotkey: '<ctrl>+<space>'
 # Hotkey mode: 'toggle' (press to start, press again to stop) or 'hold' (hold to record)
 hotkey_mode: 'hold'
 
-# Whisper model size: tiny, base, small, medium, large
-model_size: 'large'
+# Whisper model size: tiny, base, small, medium, large, large-v2, large-v3
+# You can specify any model supported by faster-whisper (e.g., 'large-v3', 'distil-large-v3')
+model_size: 'large-v3'
 
 # Device: 'cuda' (GPU) or 'cpu'
 # If 'cuda' is not available, it will fall back to 'cpu' automatically
 device: 'cuda'
 
+# Compute type: 'float16', 'int8_float16', 'int8', 'float32'
+# 'float16' is recommended for GPU, 'int8' for CPU or older GPUs
+compute_type: 'float16'
+
+# CPU threads to use for inference (only used when device is 'cpu')
+cpu_threads: 4
+
 # Language: 'ja' (Japanese), 'en' (English), etc.
 # Leave empty for auto-detection (slower)
 language: 'ja'
+
+# Memory Management
+# Time in seconds to wait before releasing VRAM after the last transcription
+# Set to 0 to never release (keep loaded), or a positive integer (e.g., 300 for 5 mins)
+release_memory_delay: 100
+
+# Advanced Transcription Settings
+# VAD (Voice Activity Detection) settings
+vad_filter: true
+vad_min_silence_duration_ms: 500
+
+# Hallucination prevention settings
+condition_on_previous_text: false  # Set to false to prevent repetition loops
+no_speech_threshold: 0.6           # Threshold for silence probability (0.0 - 1.0)
+log_prob_threshold: -1.0           # Threshold for average log probability (negative value)
+no_speech_prob_cutoff: 0.7         # Cutoff threshold for segment no_speech_prob (0.0 - 1.0)
+beam_size: 5                       # Beam size for decoding

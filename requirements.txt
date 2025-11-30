@@ -1,5 +1,5 @@
 # OpenAI Whisper for GPU
-openai-whisper
+faster-whisper
 torch
 torchaudio
 numpy
