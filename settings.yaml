@@ -1,0 +1,19 @@
+# SuperWhisper-like App Settings
+
+# Hotkey to trigger recording (e.g., '<f2>', '<ctrl>+<space>')
+# See pynput documentation for key names
+hotkey: '<ctrl>+<space>'
+
+# Hotkey mode: 'toggle' (press to start, press again to stop) or 'hold' (hold to record)
+hotkey_mode: 'hold'
+
+# Whisper model size: tiny, base, small, medium, large
+model_size: 'large'
+
+# Device: 'cuda' (GPU) or 'cpu'
+# If 'cuda' is not available, it will fall back to 'cpu' automatically
+device: 'cuda'
+
+# Language: 'ja' (Japanese), 'en' (English), etc.
+# Leave empty for auto-detection (slower)
+language: 'ja'
