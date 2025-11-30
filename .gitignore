@@ -32,3 +32,6 @@ samples/*.wma
 # OS
 .DS_Store
 Thumbs.db
+
+dist/
+bulid/
