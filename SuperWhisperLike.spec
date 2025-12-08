@@ -6,6 +6,8 @@ datas = [('settings.yaml', '.')]
 binaries = []
 hiddenimports = [
     'faster_whisper',
+    'silero_vad',
+    'groq',
     'pynput.keyboard._win32',
     'pynput.mouse._win32',
     'src.app',
@@ -17,6 +19,8 @@ hiddenimports = [
     'src.core',
     'src.core.audio_recorder',
     'src.core.transcriber',
+    'src.core.groq_transcriber',
+    'src.core.vad',
     'src.core.input_handler',
     'src.ui',
     'src.ui.overlay',
@@ -33,6 +37,11 @@ binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
 tmp_ret = collect_all('ctranslate2')
+datas += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
+
+tmp_ret = collect_all('silero_vad')
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
