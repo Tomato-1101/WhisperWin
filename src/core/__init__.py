@@ -1,7 +1,8 @@
 """Core business logic modules."""
 
 from .audio_recorder import AudioRecorder
-from .transcriber import Transcriber
+from .groq_transcriber import GroqTranscriber
 from .input_handler import InputHandler
+from .transcriber import Transcriber
 
-__all__ = ["AudioRecorder", "Transcriber", "InputHandler"]
+__all__ = ["AudioRecorder", "Transcriber", "GroqTranscriber", "InputHandler"]

@@ -1,11 +1,15 @@
 """Settings window for application configuration."""
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
+import os
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -15,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config import ConfigManager, HotkeyMode, ModelSize, ComputeType
+from ..config import ComputeType, ConfigManager, HotkeyMode, ModelSize, TranscriptionBackend
 
 
 class SettingsWindow(QWidget):
@@ -79,28 +83,85 @@ class SettingsWindow(QWidget):
     def _setup_model_tab(self) -> None:
         """Set up the Model settings tab."""
         tab = QWidget()
-        layout = QFormLayout()
-        
+        layout = QVBoxLayout()
+
         config = self._config_manager.config
-        
+
+        # Backend selection
+        backend_layout = QFormLayout()
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItems([TranscriptionBackend.LOCAL.value, TranscriptionBackend.GROQ.value])
+        self._backend_combo.setCurrentText(config.get("transcription_backend", "local"))
+        self._backend_combo.currentTextChanged.connect(self._on_backend_changed)
+        backend_layout.addRow("Backend:", self._backend_combo)
+        layout.addLayout(backend_layout)
+
+        # Local (GPU) settings group
+        self._local_group = QGroupBox("Local (GPU) Settings")
+        local_layout = QFormLayout()
+
         # Model Size
         self._model_combo = QComboBox()
         self._model_combo.addItems([m.value for m in ModelSize])
         self._model_combo.setCurrentText(config.get("model_size", ModelSize.BASE.value))
-        layout.addRow("Model Size:", self._model_combo)
-        
+        local_layout.addRow("Model Size:", self._model_combo)
+
         # Compute Type
         self._compute_combo = QComboBox()
         self._compute_combo.addItems([c.value for c in ComputeType])
         self._compute_combo.setCurrentText(config.get("compute_type", ComputeType.FLOAT16.value))
-        layout.addRow("Compute Type:", self._compute_combo)
-        
-        # Language
+        local_layout.addRow("Compute Type:", self._compute_combo)
+
+        self._local_group.setLayout(local_layout)
+        layout.addWidget(self._local_group)
+
+        # Groq API settings group
+        self._groq_group = QGroupBox("Groq API Settings")
+        groq_layout = QFormLayout()
+
+        # API Key status
+        api_key_status = "✓ Set" if os.environ.get("GROQ_API_KEY") else "✗ Not set"
+        self._api_key_status_label = QLabel(f"API Key: {api_key_status}")
+        groq_layout.addRow("", self._api_key_status_label)
+
+        # Note about environment variable
+        env_note = QLabel("Set GROQ_API_KEY environment variable")
+        env_note.setStyleSheet("color: gray; font-size: 10px;")
+        groq_layout.addRow("", env_note)
+
+        # Groq Model
+        self._groq_model_combo = QComboBox()
+        self._groq_model_combo.addItems([
+            "whisper-large-v3-turbo",
+            "whisper-large-v3",
+            "distil-whisper-large-v3-en"
+        ])
+        self._groq_model_combo.setCurrentText(config.get("groq_model", "whisper-large-v3-turbo"))
+        groq_layout.addRow("Model:", self._groq_model_combo)
+
+        self._groq_group.setLayout(groq_layout)
+        layout.addWidget(self._groq_group)
+
+        # Language (common to both backends)
+        common_layout = QFormLayout()
         self._lang_input = QLineEdit(config.get("language", "ja"))
-        layout.addRow("Language:", self._lang_input)
-        
+        common_layout.addRow("Language:", self._lang_input)
+        layout.addLayout(common_layout)
+
+        # Spacer
+        layout.addStretch()
+
         tab.setLayout(layout)
         self._tabs.addTab(tab, "Model")
+
+        # Initialize UI state
+        self._on_backend_changed(self._backend_combo.currentText())
+
+    def _on_backend_changed(self, backend: str) -> None:
+        """Handle backend selection change."""
+        is_local = (backend == TranscriptionBackend.LOCAL.value)
+        self._local_group.setEnabled(is_local)
+        self._groq_group.setEnabled(not is_local)
 
     def _setup_advanced_tab(self) -> None:
         """Set up the Advanced settings tab."""
@@ -145,13 +206,15 @@ class SettingsWindow(QWidget):
         new_config = {
             "hotkey": self._hotkey_input.text(),
             "hotkey_mode": self._mode_combo.currentText(),
+            "transcription_backend": self._backend_combo.currentText(),
             "model_size": self._model_combo.currentText(),
             "compute_type": self._compute_combo.currentText(),
+            "groq_model": self._groq_model_combo.currentText(),
             "language": self._lang_input.text(),
             "vad_filter": self._vad_check.isChecked(),
             "release_memory_delay": self._memory_spin.value(),
         }
-        
+
         if self._config_manager.save(new_config):
             QMessageBox.information(
                 self,

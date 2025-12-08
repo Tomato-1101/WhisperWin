@@ -1,6 +1,7 @@
 beam_size: 5
 compute_type: float16
 condition_on_previous_text: false
+groq_model: whisper-large-v3-turbo
 hotkey: <ctrl>+<space>
 hotkey_mode: hold
 language: ja
@@ -9,6 +10,7 @@ model_cache_dir: D:/whisper_cache
 model_size: large-v3
 no_speech_prob_cutoff: 0.7
 no_speech_threshold: 0.6
-release_memory_delay: 60
+release_memory_delay: 999
+transcription_backend: groq
 vad_filter: true
 vad_min_silence_duration_ms: 500

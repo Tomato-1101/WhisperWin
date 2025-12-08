@@ -30,13 +30,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Hotkey settings
     "hotkey": "<f2>",
     "hotkey_mode": HotkeyMode.TOGGLE.value,
-    
-    # Model settings
+
+    # Transcription backend
+    "transcription_backend": "local",  # "local" or "groq"
+
+    # Model settings (Local backend)
     "model_size": ModelSize.BASE.value,
     "compute_type": ComputeType.FLOAT16.value,
     "language": "ja",
     "model_cache_dir": "",
-    
+
+    # Groq API settings
+    "groq_model": "whisper-large-v3-turbo",  # API key from GROQ_API_KEY env var
+
     # Transcription settings
     "release_memory_delay": DEFAULT_MEMORY_RELEASE_DELAY_SEC,
     "vad_filter": True,
