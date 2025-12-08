@@ -1,4 +1,9 @@
-"""Main application controller."""
+"""
+メインアプリケーションコントローラーモジュール
+
+音声録音、文字起こし、UI、ホットキー処理など、
+すべてのコンポーネントを統合するメインコントローラー。
+"""
 
 import threading
 import time
@@ -19,20 +24,24 @@ logger = get_logger(__name__)
 
 class SuperWhisperApp(QObject):
     """
-    Main application controller.
+    メインアプリケーションコントローラー。
     
-    Integrates all components: audio recording, transcription,
-    UI overlay, settings, and hotkey handling.
+    すべてのコンポーネント（音声録音、文字起こし、UI、設定、ホットキー）を
+    統合し、アプリケーション全体のライフサイクルを管理する。
+    
+    Signals:
+        status_changed: 状態変更通知（UIスレッドセーフ）
+        text_ready: 文字起こし完了通知
     """
     
-    # Signals for thread-safe UI updates
+    # UIスレッドセーフな更新用シグナル
     status_changed = Signal(str)
     text_ready = Signal(str)
     
     def __init__(self) -> None:
-        """Initialize the application."""
+        """アプリケーションを初期化する。"""
         super().__init__()
-        logger.info("Initializing SuperWhisper...")
+        logger.info("WhisperWinを初期化中...")
         
         self._setup_config()
         self._setup_core_components()
@@ -41,35 +50,35 @@ class SuperWhisperApp(QObject):
         self._setup_state()
         self._start_background_threads()
         
-        logger.info("App Ready.")
+        logger.info("アプリケーション準備完了。")
         self.status_changed.emit("idle")
 
     def _setup_config(self) -> None:
-        """Initialize configuration manager."""
+        """設定マネージャーを初期化する。"""
         self._config = ConfigManager()
 
     def _setup_core_components(self) -> None:
-        """Initialize core business logic components."""
+        """コアビジネスロジックコンポーネントを初期化する。"""
         self._recorder = AudioRecorder()
 
-        # Initialize transcriber based on backend selection
+        # バックエンド設定に基づいてTranscriberを初期化
         backend_type = self._config.get("transcription_backend", "local")
         self._transcriber = self._create_transcriber(backend_type)
 
         self._input_handler = InputHandler()
 
-        # Initialize LLM post-processor
+        # LLM後処理の初期化
         self._setup_text_processor()
 
     def _create_transcriber(self, backend_type: str):
         """
-        Create appropriate transcriber based on backend type.
-
+        バックエンドタイプに応じたTranscriberを作成する。
+        
         Args:
-            backend_type: "local" or "groq"
-
+            backend_type: "local" または "groq"
+        
         Returns:
-            Transcriber instance (either Transcriber or GroqTranscriber).
+            TranscriberまたはGroqTranscriberのインスタンス
         """
         if backend_type == TranscriptionBackend.GROQ.value:
             transcriber = GroqTranscriber(
@@ -81,20 +90,20 @@ class SuperWhisperApp(QObject):
 
             if not transcriber.is_available():
                 logger.warning(
-                    "Groq API not available (SDK not installed or GROQ_API_KEY not set). "
-                    "Falling back to local GPU transcription."
+                    "Groq APIが利用できません（SDKが未インストールまたはGROQ_API_KEYが未設定）。 "
+                    "ローカルGPU文字起こしにフォールバックします。"
                 )
                 self._show_backend_warning("groq_unavailable")
                 return self._create_local_transcriber()
 
-            logger.info(f"Using Groq API backend with model: {transcriber.model}")
+            logger.info(f"Groq APIバックエンドを使用: モデル={transcriber.model}")
             return transcriber
         else:
             return self._create_local_transcriber()
 
     def _create_local_transcriber(self) -> Transcriber:
-        """Create local GPU transcriber."""
-        logger.info("Using local GPU backend (faster-whisper)")
+        """ローカルGPU Transcriberを作成する。"""
+        logger.info("ローカルGPUバックエンド（faster-whisper）を使用")
         return Transcriber(
             model_size=self._config.get("model_size"),
             compute_type=self._config.get("compute_type", "float16"),
@@ -112,10 +121,10 @@ class SuperWhisperApp(QObject):
 
     def _show_backend_warning(self, warning_type: str) -> None:
         """
-        Show warning message to user about backend issues.
-
+        バックエンド問題についてユーザーに警告を表示する。
+        
         Args:
-            warning_type: Type of warning ("groq_unavailable", etc.)
+            warning_type: 警告タイプ（"groq_unavailable"等）
         """
         if warning_type == "groq_unavailable":
             self._overlay.show_temporary_message(
@@ -125,7 +134,7 @@ class SuperWhisperApp(QObject):
             )
 
     def _setup_text_processor(self) -> None:
-        """Initialize LLM text post-processor."""
+        """LLMテキスト後処理を初期化する。"""
         llm_config = self._config.get("llm_postprocess", {})
         self._text_processor_enabled = llm_config.get("enabled", False)
 
@@ -140,57 +149,57 @@ class SuperWhisperApp(QObject):
 
             if not self._text_processor.is_available():
                 logger.warning(
-                    f"LLM provider {llm_config.get('provider')} not available. "
-                    "Post-processing disabled."
+                    f"LLMプロバイダー {llm_config.get('provider')} が利用できません。 "
+                    "後処理を無効化します。"
                 )
                 self._text_processor_enabled = False
                 self._text_processor = None
             else:
                 logger.info(
-                    f"LLM post-processing enabled: {llm_config.get('provider')} / "
+                    f"LLM後処理を有効化: {llm_config.get('provider')} / "
                     f"{llm_config.get('model')}"
                 )
         else:
             self._text_processor = None
 
     def _setup_ui_components(self) -> None:
-        """Initialize UI components."""
+        """UIコンポーネントを初期化する。"""
         self._overlay = DynamicIslandOverlay()
         self._settings_window = SettingsWindow()
         self._tray = SystemTray()
 
     def _setup_signals(self) -> None:
-        """Connect signals to slots."""
+        """シグナルをスロットに接続する。"""
         self._tray.open_settings.connect(self._open_settings)
         self._tray.quit_app.connect(self._quit_app)
         self.status_changed.connect(self._update_ui_status)
         self.text_ready.connect(self._handle_transcription_result)
 
     def _setup_state(self) -> None:
-        """Initialize application state."""
+        """アプリケーション状態を初期化する。"""
         self._is_recording = False
         self._is_transcribing = False
         self._cancel_transcription = False
         
-        # Hotkey configuration
+        # ホットキー設定
         self._hotkey = self._config.get("hotkey", "<f2>")
         self._hotkey_mode = self._config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
         self._pressed_keys: Set[str] = set()
         self._required_keys: Set[str] = self._parse_hotkey(self._hotkey)
         
-        # Thread control
+        # スレッド制御
         self._monitoring = True
 
     def _start_background_threads(self) -> None:
-        """Start background threads for hotkey and config monitoring."""
-        # Hotkey listener
+        """ホットキーと設定監視のバックグラウンドスレッドを開始する。"""
+        # ホットキーリスナー
         self._listener_thread = threading.Thread(
             target=self._start_keyboard_listener,
             daemon=True
         )
         self._listener_thread.start()
         
-        # Config monitor
+        # 設定ファイル監視
         self._monitor_thread = threading.Thread(
             target=self._monitor_config,
             daemon=True
@@ -198,124 +207,228 @@ class SuperWhisperApp(QObject):
         self._monitor_thread.start()
 
     # -------------------------------------------------------------------------
-    # UI Actions
+    # UIアクション
     # -------------------------------------------------------------------------
 
     def _open_settings(self) -> None:
-        """Open the settings window."""
+        """設定ウィンドウを開く。"""
         self._settings_window.show()
         self._settings_window.activateWindow()
 
     def _quit_app(self) -> None:
-        """Quit the application."""
-        logger.info("Quitting...")
+        """アプリケーションを終了する。"""
+        logger.info("終了中...")
         self._monitoring = False
         QApplication.quit()
 
     def _update_ui_status(self, status: str) -> None:
-        """Update UI components with new status."""
+        """UIコンポーネントの状態を更新する。"""
         self._overlay.set_state(status)
         self._tray.set_status(status)
 
     def _handle_transcription_result(self, text: str) -> None:
-        """Handle transcription result."""
+        """
+        文字起こし結果を処理する。
+        
+        Args:
+            text: 文字起こしテキスト
+        """
         if not text:
-            logger.info("No text detected.")
+            logger.info("テキストが検出されませんでした。")
             self._overlay.show_temporary_message("No Speech")
             return
 
         if text.startswith("Error:"):
-            logger.error(f"Transcription failed: {text}")
+            logger.error(f"文字起こし失敗: {text}")
             self._overlay.show_temporary_message("Error", is_error=True)
             return
 
-        # LLM Post-processing
+        llm_time = 0
+        llm_api_time = 0
+        # LLM後処理
         if self._text_processor_enabled and self._text_processor:
-            logger.info(f"Raw transcription: {text}")
+            raw_text = text  # 処理前のテキストを保存
+            logger.info(f"[LLM処理前] {raw_text}")
+            llm_start = time.perf_counter()
             text = self._text_processor.process(text)
+            llm_time = (time.perf_counter() - llm_start) * 1000
+            llm_api_time = getattr(self._text_processor, 'last_api_time', 0)
+            logger.info(f"[LLM処理後] {text}")
 
-        logger.info(f"Result: {text}")
+        # 開発者モード：出力を引用符で囲む
+        dev_mode = self._config.get("dev_mode", False)
+        if dev_mode:
+            text = f'"{text}"'
+
+        logger.info(f"結果: {text}")
+        
+        insert_start = time.perf_counter()
         self._input_handler.insert_text(text)
+        insert_time = (time.perf_counter() - insert_start) * 1000
 
-        # Return to idle after a short delay
+        # 開発者モード：タイミングをファイルに記録
+        if dev_mode:
+            self._log_timing_to_file(llm_time, llm_api_time, insert_time)
+
+        # 少し待ってからアイドル状態に戻る
         QTimer.singleShot(1000, lambda: self.status_changed.emit("idle"))
 
+    def _log_timing_to_file(self, llm_time: float, llm_api_time: float, insert_time: float) -> None:
+        """
+        タイミングデータをdev_timing.logファイルに記録する。
+        
+        Args:
+            llm_time: LLM処理時間（ミリ秒）
+            llm_api_time: LLM API呼び出し時間（ミリ秒）
+            insert_time: テキスト挿入時間（ミリ秒）
+        """
+        import datetime
+        log_file = "dev_timing.log"
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 前回の文字起こしからタイミング情報を取得
+        whisper_time = getattr(self, '_last_whisper_time', 0)
+        audio_duration = getattr(self, '_last_audio_duration', 0)
+        vad_time = getattr(self, '_last_vad_time', 0)
+        whisper_api_time = getattr(self, '_last_whisper_api_time', 0)
+        
+        # 実際の合計時間を計算（Whisper + LLM + Insert）
+        real_total_time = whisper_time + llm_time + insert_time
+        
+        # LLMプロバイダーとモデル情報を取得
+        llm_config = self._config.get("llm_postprocess", {})
+        llm_provider = llm_config.get("provider", "none")
+        llm_model = llm_config.get("model", "none")
+        llm_enabled = llm_config.get("enabled", False)
+        
+        # 詳細なログエントリ
+        log_entry = (
+            f"{timestamp} | "
+            f"Audio: {audio_duration:.1f}s | "
+            f"VAD: {vad_time:.0f}ms | "
+            f"WhisperAPI: {whisper_api_time:.0f}ms | "
+            f"LLMAPI: {llm_api_time:.0f}ms ({llm_provider}/{llm_model}) | "
+            f"Insert: {insert_time:.0f}ms | "
+            f"Total: {real_total_time:.0f}ms\n"
+        )
+        
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+            logger.debug(f"タイミングを {log_file} に記録しました")
+        except Exception as e:
+            logger.warning(f"タイミングログの書き込みに失敗: {e}")
+
     # -------------------------------------------------------------------------
-    # Recording and Transcription
+    # 録音と文字起こし
     # -------------------------------------------------------------------------
 
     def start_recording(self) -> None:
-        """Start audio recording."""
+        """音声録音を開始する。"""
         if self._is_recording:
             return
         
-        # Cancel any ongoing transcription
+        # 進行中の文字起こしをキャンセル
         if self._is_transcribing:
-            logger.info("New recording started - cancelling current transcription")
+            logger.info("新しい録音開始 - 現在の文字起こしをキャンセル")
             self._cancel_transcription = True
         
-        logger.info("Start Recording")
+        logger.info("録音開始")
         self._is_recording = True
         self.status_changed.emit("recording")
         
-        # Preload model in background
+        # バックグラウンドでモデルをプリロード
         threading.Thread(target=self._transcriber.load_model, daemon=True).start()
         self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
-        """Stop recording and start transcription."""
+        """録音を停止して文字起こしを開始する。"""
         if not self._is_recording:
             return
         
-        logger.info("Stop Recording")
+        stop_start = time.perf_counter()
+        logger.info("録音停止")
         self._is_recording = False
         self._is_transcribing = True
         self._cancel_transcription = False
         self.status_changed.emit("transcribing")
         
         audio_data = self._recorder.stop()
+        audio_stop_time = (time.perf_counter() - stop_start) * 1000
+        audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
         
-        # Run transcription in background
+        # 開発者モード用に保存
+        self._last_audio_duration = audio_duration
+        
+        # バックグラウンドで文字起こしを実行
         threading.Thread(
             target=self._transcribe_worker,
-            args=(audio_data,),
+            args=(audio_data, time.perf_counter()),
             daemon=True
         ).start()
 
-    def _transcribe_worker(self, audio_data) -> None:
-        """Worker thread for transcription."""
+    def _transcribe_worker(self, audio_data, start_time: float = None) -> None:
+        """
+        文字起こしワーカースレッド。
+        
+        Args:
+            audio_data: 音声データ
+            start_time: 開始時刻（タイミング計測用）
+        """
         try:
             if len(audio_data) == 0:
                 self.text_ready.emit("")
                 return
 
-            # Check if cancelled before starting
+            # 開始前にキャンセルをチェック
             if self._cancel_transcription:
-                logger.info("Transcription cancelled before processing")
+                logger.info("処理前に文字起こしがキャンセルされました")
                 return
 
+            transcribe_start = time.perf_counter()
             text = self._transcriber.transcribe(audio_data)
+            transcribe_time = (time.perf_counter() - transcribe_start) * 1000
             
-            # Check if cancelled after processing
+            # 開発者モード用に保存
+            self._last_whisper_time = transcribe_time
+            
+            # Transcriberから詳細なタイミング情報を取得（利用可能な場合）
+            self._last_vad_time = getattr(self._transcriber, 'last_vad_time', 0)
+            self._last_whisper_api_time = getattr(self._transcriber, 'last_api_time', 0)
+            
+            # 処理後にキャンセルをチェック
             if self._cancel_transcription:
-                logger.info("Transcription cancelled - discarding result")
+                logger.info("文字起こしがキャンセルされました - 結果を破棄")
                 return
+            
+            if start_time:
+                total_time = (time.perf_counter() - start_time) * 1000
+                # 開発者モード用に保存
+                self._last_total_time = total_time
             
             self.text_ready.emit(text)
         finally:
             self._is_transcribing = False
 
     # -------------------------------------------------------------------------
-    # Hotkey Handling
+    # ホットキー処理
     # -------------------------------------------------------------------------
 
     def _parse_hotkey(self, hotkey_str: str) -> Set[str]:
-        """Parse hotkey string into a set of key names."""
+        """
+        ホットキー文字列をキー名のセットにパースする。
+        
+        Args:
+            hotkey_str: ホットキー文字列（例："<ctrl>+<space>"）
+            
+        Returns:
+            キー名のセット
+        """
         keys = hotkey_str.replace('<', '').replace('>', '').split('+')
         return set(keys)
 
     def _start_keyboard_listener(self) -> None:
-        """Start the keyboard listener based on hotkey mode."""
+        """ホットキーモードに基づいてキーボードリスナーを開始する。"""
         if self._hotkey_mode == HotkeyMode.HOLD.value:
             with keyboard.Listener(
                 on_press=self._handle_key_press,
@@ -328,14 +441,19 @@ class SuperWhisperApp(QObject):
                 h.join()
 
     def _on_activate_toggle(self) -> None:
-        """Handle toggle mode activation."""
+        """トグルモードのアクティベーションを処理する。"""
         if not self._is_recording:
             self.start_recording()
         else:
             self.stop_and_transcribe()
 
     def _handle_key_press(self, key: Any) -> None:
-        """Handle key press events."""
+        """
+        キー押下イベントを処理する。
+        
+        Args:
+            key: 押されたキー
+        """
         try:
             key_str = self._normalize_key(key)
             if key_str:
@@ -346,7 +464,12 @@ class SuperWhisperApp(QObject):
             pass
 
     def _handle_key_release(self, key: Any) -> None:
-        """Handle key release events."""
+        """
+        キー解放イベントを処理する。
+        
+        Args:
+            key: 解放されたキー
+        """
         try:
             key_str = self._normalize_key(key)
             if key_str and key_str in self._pressed_keys:
@@ -357,7 +480,15 @@ class SuperWhisperApp(QObject):
             pass
 
     def _normalize_key(self, key: Any) -> Optional[str]:
-        """Normalize key to a standard string representation."""
+        """
+        キーを標準的な文字列表現に正規化する。
+        
+        Args:
+            key: 正規化するキー
+            
+        Returns:
+            正規化されたキー文字列、または失敗時None
+        """
         try:
             if hasattr(key, 'name'):
                 name = key.name.lower()
@@ -375,21 +506,21 @@ class SuperWhisperApp(QObject):
         return None
 
     # -------------------------------------------------------------------------
-    # Configuration Monitoring
+    # 設定監視
     # -------------------------------------------------------------------------
 
     def _monitor_config(self) -> None:
-        """Monitor configuration file for changes."""
+        """設定ファイルの変更を監視する。"""
         while self._monitoring:
             time.sleep(CONFIG_CHECK_INTERVAL_SEC)
             
             if self._config.reload_if_changed():
                 self._apply_config_changes()
-                logger.info("Config reloaded and applied.")
+                logger.info("設定を再読み込みして適用しました。")
 
     def _apply_config_changes(self) -> None:
-        """Apply configuration changes."""
-        # Update hotkey settings
+        """設定変更を適用する。"""
+        # ホットキー設定を更新
         new_hotkey = self._config.get("hotkey", "<f2>")
         new_mode = self._config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
         
@@ -397,46 +528,46 @@ class SuperWhisperApp(QObject):
             self._hotkey = new_hotkey
             self._hotkey_mode = new_mode
             self._required_keys = self._parse_hotkey(self._hotkey)
-            logger.info(f"Hotkey updated: {self._hotkey}")
+            logger.info(f"ホットキーを更新: {self._hotkey}")
         
-        # Update transcriber settings
+        # Transcriber設定を更新
         self._update_transcriber_settings()
 
-        # Update LLM post-processor settings
+        # LLM後処理設定を更新
         self._setup_text_processor()
 
     def _update_transcriber_settings(self) -> None:
-        """Update transcriber settings from config."""
+        """設定からTranscriber設定を更新する。"""
         new_backend = self._config.get("transcription_backend", "local")
         current_backend = "groq" if isinstance(self._transcriber, GroqTranscriber) else "local"
 
-        # Backend changed - recreate transcriber
+        # バックエンドが変更された場合 - Transcriberを再作成
         if new_backend != current_backend:
-            logger.info(f"Switching transcription backend: {current_backend} -> {new_backend}")
+            logger.info(f"文字起こしバックエンドを切り替え: {current_backend} -> {new_backend}")
 
-            # Unload old transcriber
+            # 古いTranscriberをアンロード
             if hasattr(self._transcriber, 'unload_model'):
                 self._transcriber.unload_model()
 
-            # Create new transcriber
+            # 新しいTranscriberを作成
             self._transcriber = self._create_transcriber(new_backend)
             return
 
-        # Same backend - update settings
+        # 同じバックエンド - 設定を更新
         if current_backend == "local":
             self._update_local_transcriber_settings()
         else:
             self._update_groq_transcriber_settings()
 
     def _update_local_transcriber_settings(self) -> None:
-        """Update local transcriber settings."""
+        """ローカルTranscriber設定を更新する。"""
         if not isinstance(self._transcriber, Transcriber):
             return
 
         new_model_size = self._config.get("model_size")
         model_changed = new_model_size != self._transcriber.model_size
 
-        # Update settings
+        # 設定を更新
         self._transcriber.model_size = new_model_size
         self._transcriber.compute_type = self._config.get("compute_type", "float16")
         self._transcriber.language = self._config.get("language")
@@ -452,26 +583,26 @@ class SuperWhisperApp(QObject):
         new_cache_dir = self._config.get("model_cache_dir", "")
         self._transcriber.model_cache_dir = new_cache_dir or None
 
-        # Unload model if settings changed
+        # 設定が変更された場合はモデルをアンロード
         if model_changed:
             if self._transcriber.model is not None:
-                logger.info("Model settings changed, unloading model for reload...")
+                logger.info("モデル設定が変更されました。再読み込みのためアンロードします...")
                 self._transcriber.unload_model()
 
     def _update_groq_transcriber_settings(self) -> None:
-        """Update Groq transcriber settings."""
+        """Groq Transcriber設定を更新する。"""
         if not isinstance(self._transcriber, GroqTranscriber):
             return
 
-        # Update Groq settings
+        # Groq設定を更新
         self._transcriber.model = self._config.get("groq_model", "whisper-large-v3-turbo")
         self._transcriber.language = self._config.get("language", "ja")
         
-        # Update VAD settings
+        # VAD設定を更新
         vad_filter_enabled = self._config.get("vad_filter", True)
         vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
         
-        # Check if VAD settings changed
+        # VAD設定が変更されたかチェック
         if vad_filter_enabled != self._transcriber.vad_enabled:
             self._transcriber.vad_enabled = vad_filter_enabled
             if vad_filter_enabled and self._transcriber._vad_filter is None:
@@ -483,4 +614,4 @@ class SuperWhisperApp(QObject):
             elif not vad_filter_enabled:
                 self._transcriber._vad_filter = None
         
-        logger.debug(f"Updated Groq settings: model={self._transcriber.model}, vad={vad_filter_enabled}")
+        logger.debug(f"Groq設定を更新: model={self._transcriber.model}, vad={vad_filter_enabled}")

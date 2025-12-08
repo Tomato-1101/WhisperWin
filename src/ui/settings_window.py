@@ -1,4 +1,10 @@
-"""Settings window for application configuration."""
+"""
+設定ウィンドウモジュール
+
+macOSシステム設定風のUIでアプリケーション設定を管理する。
+ホットキー、モデル設定、LLM後処理設定などを提供。
+ダーク/ライトテーマ切り替えに対応。
+"""
 
 import os
 import math
@@ -37,29 +43,41 @@ from .styles import MacTheme
 
 class ThemeToggleButton(QPushButton):
     """
-    Animated Theme Toggle Button (Sun/Moon).
+    アニメーション付きテーマ切替ボタン（太陽/月アイコン）。
+    
+    クリックでダーク/ライトモードを切り替え、
+    180度回転アニメーションで視覚的フィードバックを提供する。
     """
+    
     def __init__(self, parent=None, is_dark: bool = False):
+        """
+        テーマ切替ボタンを初期化する。
+        
+        Args:
+            parent: 親ウィジェット
+            is_dark: ダークモードの場合True
+        """
         super().__init__(parent)
         self.setFixedSize(32, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._is_dark = is_dark
-        self._angle = 0  # For rotation animation
+        self._angle = 0  # 回転角度
         
-        # Setup animation
+        # 回転アニメーション設定
         self._anim = QPropertyAnimation(self, b"angle")
         self._anim.setDuration(500)
         self._anim.setEasingCurve(QEasingCurve.Type.OutBack)
         
         self.clicked.connect(self._animate_toggle)
         
-        # Remove default styling to draw custom
+        # カスタム描画のためデフォルトスタイルを無効化
         self.setStyleSheet("border: none; background: transparent;")
 
     def _animate_toggle(self):
+        """テーマ切替時の回転アニメーションを実行する。"""
         self._is_dark = not self._is_dark
         
-        # Rotate 180 degrees
+        # 180度回転
         start = self._angle
         end = start + 180
         
@@ -70,21 +88,23 @@ class ThemeToggleButton(QPushButton):
         self.update()
 
     def get_angle(self):
+        """現在の回転角度を取得する。"""
         return self._angle
 
     def set_angle(self, value):
+        """回転角度を設定する。"""
         self._angle = value
         self.update()
 
     angle = property(get_angle, set_angle)
 
     def paintEvent(self, event):
+        """太陽または月のアイコンを描画する。"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Determine color based on theme (inverse of background usually, or constant accent)
-        # Using a fixed color like dark gray/white depending on state
-        color = QColor("#FFD60A") if not self._is_dark else QColor("#F2F2F7") # Sun yellow / Moon white
+        # テーマに応じた色（太陽：黄、月：白）
+        color = QColor("#FFD60A") if not self._is_dark else QColor("#F2F2F7")
         
         width = self.width()
         height = self.height()
@@ -94,23 +114,23 @@ class ThemeToggleButton(QPushButton):
         painter.rotate(self._angle)
         
         if not self._is_dark:
-            # Draw Sun
+            # 太陽を描画
             painter.setBrush(QBrush(color))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(0, 0), 6, 6)
             
-            # Rays
+            # 光線を描画
             painter.setPen(QPen(color, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             for i in range(8):
                 painter.rotate(45)
                 painter.drawLine(0, 9, 0, 11)
                 
         else:
-            # Draw Moon
+            # 月（三日月）を描画
             painter.setBrush(QBrush(color))
             painter.setPen(Qt.PenStyle.NoPen)
             
-            # Draw circles to form crescent
+            # 2つの円で三日月形状を作成
             path = QPainterPath()
             path.addEllipse(QPointF(0, 0), 8, 8)
             
@@ -123,26 +143,35 @@ class ThemeToggleButton(QPushButton):
 
 class HotkeyInput(QLineEdit):
     """
-    Custom widget to record hotkeys by pressing them.
+    ホットキー録音用カスタムウィジェット。
+    
+    クリックしてキーを押すと、そのキーコンビネーションを
+    pynput形式の文字列として記録する。
     """
+    
     def __init__(self, parent=None):
+        """ホットキー入力ウィジェットを初期化する。"""
         super().__init__(parent)
         self.setReadOnly(True)
         self.setPlaceholderText("Click to record shortcut...")
-        # Style handles mostly everything, but we ensure focus rect is nice
-        pass
 
     def keyPressEvent(self, event: QKeyEvent):
+        """
+        キー押下イベントを処理してホットキーを記録する。
+        
+        Args:
+            event: キーイベント
+        """
         key = event.key()
         modifiers = event.modifiers()
 
-        # Ignore standalone modifier presses
+        # 単独の修飾キーは無視
         if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
             return
 
         parts = []
 
-        # Mods
+        # 修飾キー
         if modifiers & Qt.KeyboardModifier.ControlModifier:
             parts.append("<ctrl>")
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
@@ -152,7 +181,7 @@ class HotkeyInput(QLineEdit):
         if modifiers & Qt.KeyboardModifier.MetaModifier:
             parts.append("<cmd>")
 
-        # Key
+        # メインキー
         key_text = self._get_key_text(key)
         if key_text:
             parts.append(key_text)
@@ -161,7 +190,16 @@ class HotkeyInput(QLineEdit):
         event.accept()
 
     def _get_key_text(self, key: int) -> str:
-        # Special keys mapping to pynput format
+        """
+        Qtキーコードをpynput形式の文字列に変換する。
+        
+        Args:
+            key: Qtキーコード
+            
+        Returns:
+            pynput形式のキー文字列
+        """
+        # 特殊キーのマッピング
         mapping = {
             Qt.Key.Key_F1: "<f1>", Qt.Key.Key_F2: "<f2>", Qt.Key.Key_F3: "<f3>",
             Qt.Key.Key_F4: "<f4>", Qt.Key.Key_F5: "<f5>", Qt.Key.Key_F6: "<f6>",
@@ -199,17 +237,19 @@ class HotkeyInput(QLineEdit):
 
 class SettingsWindow(QWidget):
     """
-    Settings window for configuring the application.
-    Refactored to match macOS System Settings style with Theme Toggle.
+    アプリケーション設定ウィンドウ。
+    
+    macOSシステム設定風のサイドバーナビゲーションUIを提供し、
+    General/Model/Advanced/LLMの4つのページで設定を管理する。
     """
 
     def __init__(self) -> None:
-        """Initialize the settings window."""
+        """設定ウィンドウを初期化する。"""
         super().__init__()
 
         self._config_manager = ConfigManager()
         
-        # Load theme preference (default to False/Light)
+        # テーマ設定を読み込み（デフォルトはライトモード）
         config = self._config_manager.config
         self._is_dark_mode = config.get("dark_mode", False)
 
@@ -217,21 +257,21 @@ class SettingsWindow(QWidget):
         self._setup_ui()
         self._load_current_settings()
         
-        # Apply initial theme
+        # 初期テーマを適用
         self._apply_theme(self._is_dark_mode)
 
     def _setup_window(self) -> None:
-        """Configure window properties."""
+        """ウィンドウプロパティを設定する。"""
         self.setWindowTitle("Settings")
         self.resize(720, 480)
 
     def _setup_ui(self) -> None:
-        """Set up the UI components."""
+        """UIコンポーネントを設定する。"""
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- Sidebar ---
+        # --- サイドバー ---
         self._sidebar = QListWidget()
         self._sidebar.setFixedWidth(200)
         self._sidebar.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, False)
@@ -239,20 +279,20 @@ class SettingsWindow(QWidget):
         self._sidebar.currentRowChanged.connect(self._change_page)
         main_layout.addWidget(self._sidebar)
 
-        # --- Content Area ---
+        # --- コンテンツエリア ---
         content_container = QWidget()
         content_layout = QVBoxLayout(content_container)
         content_layout.setContentsMargins(40, 30, 40, 30)
         content_layout.setSpacing(20)
 
-        # Header (Title + Theme Toggle)
+        # ヘッダー（タイトル + テーマ切替）
         header_layout = QHBoxLayout()
         header_layout.setSpacing(10)
         
         self._page_title = QLabel("General")
         self._page_title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 5px;")
         
-        # Theme Toggle
+        # テーマ切替ボタン
         self._theme_toggle = ThemeToggleButton(is_dark=self._is_dark_mode)
         self._theme_toggle.clicked.connect(self._toggle_theme)
         
@@ -262,11 +302,11 @@ class SettingsWindow(QWidget):
         
         content_layout.addLayout(header_layout)
 
-        # Stacked Widget for pages
+        # ページスタックウィジェット
         self._pages_stack = QStackedWidget()
         content_layout.addWidget(self._pages_stack)
         
-        # Buttons area (Save/Cancel) - Bottom of content
+        # ボタンエリア（保存/キャンセル）
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
@@ -276,7 +316,7 @@ class SettingsWindow(QWidget):
         
         self._save_btn = QPushButton("Save Settings")
         self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_btn.setProperty("class", "primary") # For styling
+        self._save_btn.setProperty("class", "primary")  # プライマリボタンスタイル
         self._save_btn.clicked.connect(self._save_settings)
         
         button_layout.addWidget(self._cancel_btn)
@@ -286,49 +326,60 @@ class SettingsWindow(QWidget):
         
         main_layout.addWidget(content_container)
 
-        # Add pages
+        # ページを追加
         self._setup_pages()
 
     def _setup_pages(self) -> None:
-        """Create and add pages to the stack."""
+        """各設定ページを作成してスタックに追加する。"""
         self._add_page("General", self._create_general_page())
         self._add_page("Model", self._create_model_page())
         self._add_page("Advanced", self._create_advanced_page())
         self._add_page("LLM", self._create_llm_page())
 
-        # Select first item
+        # 最初のページを選択
         self._sidebar.setCurrentRow(0)
 
     def _add_page(self, name: str, widget: QWidget) -> None:
-        """Add a page to the sidebar and stack."""
+        """
+        サイドバーとスタックにページを追加する。
+        
+        Args:
+            name: ページ名
+            widget: ページウィジェット
+        """
         item = QListWidgetItem(name)
         self._sidebar.addItem(item)
         self._pages_stack.addWidget(widget)
 
     def _change_page(self, index: int) -> None:
-        """Handle page switching."""
+        """
+        ページ切替を処理する。
+        
+        Args:
+            index: 選択されたページのインデックス
+        """
         self._pages_stack.setCurrentIndex(index)
         item = self._sidebar.item(index)
         if item:
             self._page_title.setText(item.text())
 
     def _create_general_page(self) -> QWidget:
-        """Create General settings page."""
+        """Generalページを作成する。"""
         page = QWidget()
         layout = QFormLayout(page)
         layout.setSpacing(15)
         layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # Hotkey - using custom recorder widget
+        # ホットキー入力
         self._hotkey_input = HotkeyInput()
         layout.addRow("Global Hotkey:", self._hotkey_input)
 
-        # Hotkey Mode
+        # ホットキーモード
         self._mode_combo = QComboBox()
         self._mode_combo.addItems([m.value for m in HotkeyMode])
         layout.addRow("Trigger Mode:", self._mode_combo)
         
-        # Language
+        # 言語
         self._lang_input = QLineEdit()
         self._lang_input.setPlaceholderText("e.g. ja, en")
         layout.addRow("Language:", self._lang_input)
@@ -336,12 +387,12 @@ class SettingsWindow(QWidget):
         return page
 
     def _create_model_page(self) -> QWidget:
-        """Create Model settings page."""
+        """Modelページを作成する。"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setSpacing(20)
         
-        # Backend selection
+        # バックエンド選択
         backend_layout = QFormLayout()
         self._backend_combo = QComboBox()
         self._backend_combo.addItems([TranscriptionBackend.LOCAL.value, TranscriptionBackend.GROQ.value])
@@ -349,7 +400,7 @@ class SettingsWindow(QWidget):
         backend_layout.addRow("Transcription Engine:", self._backend_combo)
         layout.addLayout(backend_layout)
         
-        # Local Settings Group
+        # ローカル設定グループ
         self._local_group = QGroupBox("Local Engine Settings (GPU)")
         local_layout = QFormLayout()
         
@@ -364,7 +415,7 @@ class SettingsWindow(QWidget):
         self._local_group.setLayout(local_layout)
         layout.addWidget(self._local_group)
 
-        # Groq Settings Group
+        # Groq設定グループ
         self._groq_group = QGroupBox("Groq API Settings (Cloud)")
         groq_layout = QFormLayout()
         
@@ -386,16 +437,16 @@ class SettingsWindow(QWidget):
         return page
 
     def _create_advanced_page(self) -> QWidget:
-        """Create Advanced settings page."""
+        """Advancedページを作成する。"""
         page = QWidget()
         layout = QFormLayout(page)
         layout.setSpacing(15)
 
-        # VAD
+        # VAD設定
         self._vad_check = QCheckBox("Enable Voice Activity Detection")
         layout.addRow("", self._vad_check)
 
-        # Memory Release
+        # メモリ解放遅延
         self._memory_spin = QSpinBox()
         self._memory_spin.setRange(0, 3600)
         self._memory_spin.setSuffix(" sec")
@@ -404,33 +455,33 @@ class SettingsWindow(QWidget):
         return page
 
     def _create_llm_page(self) -> QWidget:
-        """Create LLM post-processing settings page."""
+        """LLM後処理ページを作成する。"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setSpacing(20)
 
-        # ===== LLM Settings Group =====
+        # ===== LLM設定グループ =====
         llm_settings_group = QGroupBox("LLM Post-Processing Settings")
         llm_layout = QFormLayout()
         llm_layout.setSpacing(15)
         llm_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # Enable checkbox
+        # 有効化チェックボックス
         self._llm_enabled_check = QCheckBox("Enable LLM Post-Processing")
         self._llm_enabled_check.stateChanged.connect(self._on_llm_enabled_changed)
         llm_layout.addRow("", self._llm_enabled_check)
 
-        # Provider selection
+        # プロバイダー選択
         self._llm_provider_combo = QComboBox()
         self._llm_provider_combo.addItems(["groq", "cerebras"])
         self._llm_provider_combo.currentTextChanged.connect(self._on_llm_provider_changed)
         llm_layout.addRow("Provider:", self._llm_provider_combo)
 
-        # Model selection (dynamic based on provider)
+        # モデル選択（プロバイダーに応じて動的に変化）
         self._llm_model_combo = QComboBox()
         llm_layout.addRow("Model:", self._llm_model_combo)
 
-        # Timeout
+        # タイムアウト
         self._llm_timeout_spin = QDoubleSpinBox()
         self._llm_timeout_spin.setRange(1.0, 30.0)
         self._llm_timeout_spin.setSingleStep(0.5)
@@ -438,14 +489,14 @@ class SettingsWindow(QWidget):
         self._llm_timeout_spin.setDecimals(1)
         llm_layout.addRow("Timeout:", self._llm_timeout_spin)
 
-        # Fallback on error
+        # エラー時フォールバック
         self._llm_fallback_check = QCheckBox("Use original text if LLM fails")
         llm_layout.addRow("", self._llm_fallback_check)
 
         llm_settings_group.setLayout(llm_layout)
         layout.addWidget(llm_settings_group)
 
-        # ===== API Keys Status Group =====
+        # ===== APIキーステータスグループ =====
         api_keys_group = QGroupBox("API Keys Status")
         api_keys_layout = QFormLayout()
         api_keys_layout.setSpacing(10)
@@ -460,7 +511,7 @@ class SettingsWindow(QWidget):
         api_keys_group.setLayout(api_keys_layout)
         layout.addWidget(api_keys_group)
 
-        # ===== System Prompt Group =====
+        # ===== システムプロンプトグループ =====
         prompt_group = QGroupBox("System Prompt")
         prompt_layout = QVBoxLayout()
 
@@ -486,7 +537,7 @@ class SettingsWindow(QWidget):
         return page
 
     def _load_current_settings(self) -> None:
-        """Load values from config into UI."""
+        """設定ファイルから現在の値をUIに読み込む。"""
         config = self._config_manager.config
         
         # General
@@ -500,12 +551,10 @@ class SettingsWindow(QWidget):
         self._compute_combo.setCurrentText(config.get("compute_type", ComputeType.FLOAT16.value))
         self._groq_model_combo.setCurrentText(config.get("groq_model", "whisper-large-v3-turbo"))
         
-        # API Key Status
+        # APIキーステータス
         has_key = bool(os.environ.get("GROQ_API_KEY"))
         status_text = "✓ Ready" if has_key else "✗ Not Set (Check Environment)"
         status_color = "green" if has_key else "red"
-        # Since we use global stylesheet, we use inline for specific color status or just classes
-        # But inline works fine for simple label colors
         self._api_key_status_label.setText(status_text)
         self._api_key_status_label.setStyleSheet(f"color: {status_color}; font-weight: bold;")
         
@@ -521,30 +570,40 @@ class SettingsWindow(QWidget):
         self._llm_fallback_check.setChecked(llm_config.get("fallback_on_error", True))
         self._llm_prompt_edit.setPlainText(llm_config.get("system_prompt", ""))
 
-        # Update model list and select current model
+        # モデルリストを更新して現在のモデルを選択
         self._on_llm_provider_changed(self._llm_provider_combo.currentText())
         self._llm_model_combo.setCurrentText(llm_config.get("model", "llama-3.3-70b-versatile"))
 
-        # Initialize enabled state
+        # 有効状態を初期化
         self._on_llm_enabled_changed(self._llm_enabled_check.checkState().value)
 
-        # Update API key status
+        # APIキーステータスを更新
         self._update_api_key_status()
 
-        # Initialize visibility state
+        # 表示状態を初期化
         self._on_backend_changed(self._backend_combo.currentText())
 
     def _on_backend_changed(self, backend: str) -> None:
-        """Handle backend selection state."""
+        """
+        バックエンド選択変更を処理する。
+        
+        Args:
+            backend: 選択されたバックエンド（"local" or "groq"）
+        """
         is_local = (backend == TranscriptionBackend.LOCAL.value)
         self._local_group.setVisible(is_local)
         self._groq_group.setVisible(not is_local)
 
     def _on_llm_enabled_changed(self, state: int) -> None:
-        """Handle LLM enabled state change."""
+        """
+        LLM有効化状態の変更を処理する。
+        
+        Args:
+            state: チェック状態の値
+        """
         enabled = (state == Qt.CheckState.Checked.value)
 
-        # Enable/disable all LLM-related widgets
+        # LLM関連ウィジェットの有効/無効を切り替え
         self._llm_provider_combo.setEnabled(enabled)
         self._llm_model_combo.setEnabled(enabled)
         self._llm_timeout_spin.setEnabled(enabled)
@@ -552,7 +611,23 @@ class SettingsWindow(QWidget):
         self._llm_prompt_edit.setEnabled(enabled)
 
     def _on_llm_provider_changed(self, provider: str) -> None:
-        """Update model list based on selected provider."""
+        """
+        LLMプロバイダー変更時にモデルリストを更新する。
+        
+        Args:
+            provider: 選択されたプロバイダー
+        """
+        # 以前のプロバイダーの選択モデルを記憶
+        if hasattr(self, '_last_provider') and hasattr(self, '_provider_models'):
+            current_model = self._llm_model_combo.currentText()
+            if current_model:
+                self._provider_models[self._last_provider] = current_model
+        
+        # プロバイダーモデル辞書を初期化
+        if not hasattr(self, '_provider_models'):
+            self._provider_models = {}
+        
+        self._last_provider = provider
         self._llm_model_combo.clear()
 
         if provider == "groq":
@@ -561,18 +636,33 @@ class SettingsWindow(QWidget):
                 "llama-3.1-8b-instant",
                 "mixtral-8x7b-32768"
             ]
+            default_model = "llama-3.3-70b-versatile"
         elif provider == "cerebras":
+            # Cerebrasドキュメントのモデル一覧
             models = [
                 "llama3.1-8b",
-                "llama3.1-70b"
+                "llama-3.3-70b",
+                "qwen-3-32b",
+                "qwen-3-235b-a22b-instruct-2507",
+                "gpt-oss-120b",
+                "zai-glm-4.6"
             ]
+            default_model = "llama-3.3-70b"
         else:
             models = []
+            default_model = ""
 
         self._llm_model_combo.addItems(models)
+        
+        # 以前選択したモデルを復元、またはデフォルトを使用
+        last_model = self._provider_models.get(provider, default_model)
+        if last_model in models:
+            self._llm_model_combo.setCurrentText(last_model)
+        elif models:
+            self._llm_model_combo.setCurrentIndex(0)
 
     def _update_api_key_status(self) -> None:
-        """Update API key status labels."""
+        """APIキーステータスラベルを更新する。"""
         # Groq
         has_groq = bool(os.environ.get("GROQ_API_KEY"))
         groq_text = "✓ Ready" if has_groq else "✗ Not Set"
@@ -588,23 +678,22 @@ class SettingsWindow(QWidget):
         self._cerebras_key_status.setStyleSheet(f"color: {cerebras_color}; font-weight: bold;")
 
     def _toggle_theme(self) -> None:
-        """Switch between dark and light mode."""
+        """ダーク/ライトモードを切り替える。"""
         self._is_dark_mode = not self._is_dark_mode
         self._apply_theme(self._is_dark_mode)
 
     def _apply_theme(self, is_dark: bool) -> None:
-        """Apply the global stylesheet based on theme mode."""
+        """
+        テーマモードに基づいてグローバルスタイルシートを適用する。
+        
+        Args:
+            is_dark: ダークモードの場合True
+        """
         stylesheet = MacTheme.get_stylesheet(is_dark)
         self.setStyleSheet(stylesheet)
-        
-        # In a real app we might need to update specific non-Qt-styled elements if any,
-        # but here the stylesheet covers almost everything.
-        
-        # We might want to save this state immediately or just on save
-        # Saving immediately is better UX for theme
 
     def _save_settings(self) -> None:
-        """Save settings to config file."""
+        """設定をファイルに保存する。"""
         new_config = {
             "hotkey": self._hotkey_input.text(),
             "hotkey_mode": self._mode_combo.currentText(),
@@ -615,9 +704,9 @@ class SettingsWindow(QWidget):
             "groq_model": self._groq_model_combo.currentText(),
             "vad_filter": self._vad_check.isChecked(),
             "release_memory_delay": self._memory_spin.value(),
-            "dark_mode": self._is_dark_mode,  # Save theme preference
+            "dark_mode": self._is_dark_mode,  # テーマ設定を保存
 
-            # LLM Post-Processing
+            # LLM後処理設定
             "llm_postprocess": {
                 "enabled": self._llm_enabled_check.isChecked(),
                 "provider": self._llm_provider_combo.currentText(),

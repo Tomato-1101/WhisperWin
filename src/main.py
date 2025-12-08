@@ -1,4 +1,9 @@
-"""Application entry point."""
+"""
+アプリケーションエントリーポイントモジュール
+
+アプリケーションの起動処理を行う。
+環境変数の読み込み、ロギング設定、Qtアプリケーションの初期化を行う。
+"""
 
 import sys
 import traceback
@@ -10,33 +15,33 @@ from PySide6.QtWidgets import QApplication
 from .app import SuperWhisperApp
 from .utils.logger import get_logger, setup_logger
 
-# Load environment variables from .env file
+# .envファイルから環境変数を読み込み（APIキー等）
 load_dotenv()
 
-# Setup logging
+# ロギング設定
 setup_logger(log_file="startup_log.txt")
 logger = get_logger(__name__)
 
 
 def main() -> int:
     """
-    Main entry point for the application.
+    アプリケーションのメインエントリーポイント。
     
     Returns:
-        Exit code (0 for success, non-zero for failure).
+        終了コード（0: 成功、非0: 失敗）
     """
     try:
-        # Configure High DPI support
+        # 高DPIディスプレイサポートを設定
         _configure_high_dpi()
         
-        # Create Qt application
+        # Qtアプリケーションを作成
         app = QApplication(sys.argv)
-        app.setQuitOnLastWindowClosed(False)  # Keep running for system tray
+        app.setQuitOnLastWindowClosed(False)  # システムトレイ動作のため
         
-        # Create main controller
+        # メインコントローラーを作成
         controller = SuperWhisperApp()
         
-        # Run event loop
+        # イベントループを実行
         return app.exec()
         
     except Exception as e:
@@ -45,7 +50,7 @@ def main() -> int:
 
 
 def _configure_high_dpi() -> None:
-    """Configure High DPI display support."""
+    """高DPIディスプレイサポートを設定する。"""
     if hasattr(Qt.ApplicationAttribute, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
     if hasattr(Qt.ApplicationAttribute, 'AA_UseHighDpiPixmaps'):
@@ -54,15 +59,15 @@ def _configure_high_dpi() -> None:
 
 def _handle_critical_error(error: Exception) -> None:
     """
-    Handle critical errors by logging and writing to error file.
+    致命的エラーをログに記録しファイルに書き出す。
     
     Args:
-        error: The exception that occurred.
+        error: 発生した例外
     """
-    error_msg = f"Critical Error: {error}"
+    error_msg = f"致命的エラー: {error}"
     logger.critical(error_msg, exc_info=True)
     
-    # Write detailed error to file
+    # 詳細なエラー情報をファイルに書き出し
     with open("error_log.txt", "w", encoding="utf-8") as f:
         traceback.print_exc(file=f)
     

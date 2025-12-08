@@ -1,11 +1,16 @@
-"""Speech-to-text transcription using faster-whisper."""
+"""
+ローカルWhisper文字起こしモジュール
+
+faster-whisperを使用してGPU上で音声を文字起こしする。
+VRAMの自動管理（遅延解放）機能付き。
+"""
 
 import os
 
-# Configure HuggingFace environment before imports
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+# HuggingFace環境設定（インポート前に設定）
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # プログレスバー無効化
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"  # シンボリックリンク警告無効化
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"  # シンボリックリンク無効化
 
 import gc
 import threading
@@ -24,10 +29,16 @@ logger = get_logger(__name__)
 
 class Transcriber:
     """
-    Handles audio transcription using faster-whisper.
+    ローカルGPUでの音声文字起こしクラス。
     
-    GPU/CUDA only - requires a CUDA-capable GPU.
-    Supports automatic model loading/unloading for memory management.
+    faster-whisperを使用してCUDA対応GPUで高速文字起こしを行う。
+    VRAMの自動解放機能により、一定時間後にモデルをアンロードする。
+    
+    Attributes:
+        model_size: Whisperモデルサイズ
+        compute_type: 計算精度（float16, int8など）
+        language: 言語コード
+        release_memory_delay: VRAMを解放するまでの待機時間（秒）
     """
     
     def __init__(
@@ -46,41 +57,41 @@ class Transcriber:
         model_cache_dir: str = ""
     ) -> None:
         """
-        Initialize Transcriber.
+        Transcriberを初期化する。
         
         Args:
-            model_size: Whisper model size.
-            compute_type: Computation precision type.
-            language: Language code for transcription.
-            release_memory_delay: Seconds before unloading model from VRAM.
-            vad_filter: Enable Voice Activity Detection.
-            vad_min_silence_duration_ms: Minimum silence duration for VAD.
-            condition_on_previous_text: Condition on previous transcription.
-            no_speech_threshold: Threshold for no-speech detection.
-            log_prob_threshold: Log probability threshold.
-            no_speech_prob_cutoff: Cutoff for no-speech probability.
-            beam_size: Beam size for decoding.
-            model_cache_dir: Directory for model cache.
+            model_size: Whisperモデルサイズ（tiny/base/small/medium/large等）
+            compute_type: 計算精度タイプ
+            language: 言語コード（ja, en等）
+            release_memory_delay: VRAM解放までの待機秒数
+            vad_filter: VAD（音声活性検出）を有効にするか
+            vad_min_silence_duration_ms: VADの最小無音時間（ミリ秒）
+            condition_on_previous_text: 前のテキストを条件付けに使用するか
+            no_speech_threshold: 無発話判定閾値
+            log_prob_threshold: ログ確率閾値
+            no_speech_prob_cutoff: 無発話確率カットオフ
+            beam_size: ビームサーチサイズ
+            model_cache_dir: モデルキャッシュディレクトリ
             
         Raises:
-            RuntimeError: If CUDA is not available.
+            RuntimeError: CUDAが利用できない場合
         """
-        # Verify CUDA availability
+        # CUDA利用可否を確認
         if not torch.cuda.is_available():
-            error_msg = "CUDA is not available. This application requires a CUDA-capable GPU."
+            error_msg = "CUDAが利用できません。このアプリケーションにはCUDA対応GPUが必要です。"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        # Model settings
+        # モデル設定
         self.model_size = model_size
         self.compute_type = compute_type
         self.language = language
         self.model_cache_dir = model_cache_dir or None
         
-        # Memory management
+        # メモリ管理設定
         self.release_memory_delay = release_memory_delay
         
-        # Transcription settings
+        # 文字起こし設定
         self.vad_filter = vad_filter
         self.vad_min_silence_duration_ms = vad_min_silence_duration_ms
         self.condition_on_previous_text = condition_on_previous_text
@@ -89,18 +100,18 @@ class Transcriber:
         self.no_speech_prob_cutoff = no_speech_prob_cutoff
         self.beam_size = beam_size
         
-        # Internal state
-        self._model: Optional[WhisperModel] = None
-        self._unload_timer: Optional[threading.Timer] = None
-        self._lock = threading.Lock()
+        # 内部状態
+        self._model: Optional[WhisperModel] = None  # Whisperモデル
+        self._unload_timer: Optional[threading.Timer] = None  # アンロードタイマー
+        self._lock = threading.Lock()  # スレッドセーフ用ロック
 
     @property
     def model(self) -> Optional[WhisperModel]:
-        """Get the current model instance."""
+        """現在のモデルインスタンスを取得する。"""
         return self._model
 
     def load_model(self) -> None:
-        """Load the model if not already loaded."""
+        """モデルをロードする（未ロードの場合）。"""
         with self._lock:
             self._cancel_unload_timer()
             
@@ -108,8 +119,8 @@ class Transcriber:
                 return
 
             logger.info(
-                f"Loading faster-whisper model '{self.model_size}' "
-                f"on cuda ({self.compute_type})..."
+                f"faster-whisperモデル '{self.model_size}' を "
+                f"cuda ({self.compute_type}) でロード中..."
             )
             
             try:
@@ -120,35 +131,35 @@ class Transcriber:
                 
                 if self.model_cache_dir:
                     model_kwargs["download_root"] = self.model_cache_dir
-                    logger.info(f"Using model cache directory: {self.model_cache_dir}")
+                    logger.info(f"モデルキャッシュディレクトリ: {self.model_cache_dir}")
                 
                 self._model = WhisperModel(self.model_size, **model_kwargs)
-                logger.info("Model loaded successfully.")
+                logger.info("モデルのロードが完了しました。")
                 
             except Exception as e:
-                logger.error(f"Error loading model: {e}")
+                logger.error(f"モデルロードエラー: {e}")
                 raise
 
     def unload_model(self) -> None:
-        """Unload the model to release VRAM."""
+        """モデルをアンロードしてVRAMを解放する。"""
         with self._lock:
             if self._model:
-                logger.info("Unloading model to release memory...")
+                logger.info("メモリ解放のためモデルをアンロード中...")
                 del self._model
                 self._model = None
                 gc.collect()
                 torch.cuda.empty_cache()
-                logger.info("Model unloaded.")
+                logger.info("モデルをアンロードしました。")
 
     def transcribe(self, audio_data: npt.NDArray[np.float32]) -> str:
         """
-        Transcribe audio data to text.
+        音声データを文字起こしする。
         
         Args:
-            audio_data: Audio samples as numpy array.
+            audio_data: 音声データ（float32のNumPy配列）
             
         Returns:
-            Transcribed text.
+            文字起こし結果テキスト
         """
         if self._model is None:
             self.load_model()
@@ -157,6 +168,7 @@ class Transcriber:
             return ""
 
         try:
+            # 文字起こし実行
             segments, info = self._model.transcribe(
                 audio_data,
                 language=self.language or None,
@@ -168,7 +180,7 @@ class Transcriber:
                 log_prob_threshold=self.log_prob_threshold,
             )
             
-            # Collect text from segments, filtering by no_speech probability
+            # 無発話確率でフィルタリングしてテキスト収集
             text_segments = [
                 segment.text
                 for segment in segments
@@ -180,12 +192,12 @@ class Transcriber:
             return text
             
         except Exception as e:
-            logger.error(f"Transcription error: {e}")
+            logger.error(f"文字起こしエラー: {e}")
             self._schedule_unload()
             return f"Error: {e}"
 
     def _schedule_unload(self) -> None:
-        """Schedule model unload after delay."""
+        """遅延後にモデルアンロードをスケジュールする。"""
         if self.release_memory_delay <= 0:
             return
 
@@ -196,10 +208,10 @@ class Transcriber:
                 self.unload_model
             )
             self._unload_timer.start()
-            logger.debug(f"Memory release scheduled in {self.release_memory_delay} seconds.")
+            logger.debug(f"{self.release_memory_delay}秒後にメモリ解放を予約しました。")
 
     def _cancel_unload_timer(self) -> None:
-        """Cancel any pending unload timer."""
+        """保留中のアンロードタイマーをキャンセルする。"""
         if self._unload_timer:
             self._unload_timer.cancel()
             self._unload_timer = None
