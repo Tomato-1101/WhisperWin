@@ -140,3 +140,53 @@ Set `model_cache_dir` in settings.yaml to avoid HuggingFace Hub trying to create
 - Constants in src/config/constants.py (UI dimensions, intervals, default config)
 - Logger via src/utils/logger.py (get_logger(__name__))
 - PySide6 signals for thread-safe UI updates (never manipulate UI from worker threads directly)
+
+## コメントルール（重要）
+
+**すべてのコードに日本語コメントを追加すること。**
+
+### 必須コメント
+
+1. **モジュールdocstring**: 各ファイルの先頭に目的を説明
+   ```python
+   """
+   音声録音モジュール
+   
+   sounddeviceライブラリを使用してマイクから音声を録音する機能を提供する。
+   """
+   ```
+
+2. **クラスdocstring**: クラスの役割と主要な属性を説明
+   ```python
+   class AudioRecorder:
+       """
+       音声録音を管理するクラス。
+       
+       Attributes:
+           sample_rate: サンプリングレート（Hz）
+       """
+   ```
+
+3. **メソッド/関数docstring**: Args, Returns, Raisesを明記
+   ```python
+   def start(self) -> bool:
+       """
+       録音を開始する。
+       
+       Returns:
+           成功した場合True
+       """
+   ```
+
+4. **インラインコメント**: 複雑なロジックや意図が不明確な箇所に追加
+   ```python
+   # float32 [-1.0, 1.0] から int16 に変換
+   audio_int16 = (audio_data * 32767).astype(np.int16)
+   ```
+
+### コメントのスタイル
+
+- 言語: **日本語**
+- 簡潔かつ明確に
+- 「何をするか」ではなく「なぜそうするか」を重視
+- 明らかなコードには不要なコメントを追加しない

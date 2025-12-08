@@ -154,7 +154,6 @@ class MacTheme:
             height: 6px;
             margin-right: 8px;
             margin-top: -2px;
-            transform: rotate(-45deg);
         }}
         QComboBox QAbstractItemView {{
             border: 1px solid {c.BORDER};
