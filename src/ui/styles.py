@@ -172,22 +172,63 @@ class MacTheme:
             image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIi8+PC9zdmc+);
         }}
         
+        /* QTextEdit */
+        QTextEdit {{
+            background-color: {c.INPUT_BG};
+            color: {c.TEXT};
+            border: 1px solid {c.BORDER};
+            border-radius: 6px;
+            padding: 8px;
+            font-family: '{MacTheme.FONT_FAMILY}';
+            font-size: {MacTheme.FONT_SIZE_NORMAL}px;
+            selection-background-color: {c.ACCENT};
+        }}
+        QTextEdit:focus {{
+            border: 2px solid {c.ACCENT};
+            padding: 7px;
+        }}
+
+        /* QDoubleSpinBox */
+        QDoubleSpinBox {{
+            background-color: {c.INPUT_BG};
+            border: 1px solid {c.BORDER};
+            border-radius: 6px;
+            padding: 5px 10px;
+            selection-background-color: {c.ACCENT};
+            color: {c.TEXT};
+            min-height: 22px;
+        }}
+        QDoubleSpinBox:focus {{
+            border: 2px solid {c.ACCENT};
+            padding: 4px 9px;
+        }}
+
+        /* Placeholder Text */
+        QLineEdit::placeholder, QTextEdit::placeholder {{
+            color: {c.SECONDARY_TEXT};
+            font-style: italic;
+        }}
+
         /* GroupBox */
         QGroupBox {{
             background-color: {c.WINDOW_BG};
             border: 1px solid {c.BORDER};
             border-radius: 8px;
-            margin-top: 24px;
-            padding: 16px;
-            font-size: 13px;
+            margin-top: 16px;
+            padding-top: 20px;
+            padding-bottom: 16px;
+            padding-left: 16px;
+            padding-right: 16px;
+            font-size: 14px;
+            font-weight: 600;
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
             subcontrol-position: top left;
-            padding: 0 4px;
+            padding: 0 5px;
             color: {c.TEXT};
             font-weight: 600;
-            left: 10px;
+            left: 12px;
         }}
         
         /* Sidebar List */

@@ -10,7 +10,7 @@ from pynput import keyboard
 
 from .config import ConfigManager, HotkeyMode, TranscriptionBackend
 from .config.constants import CONFIG_CHECK_INTERVAL_SEC
-from .core import AudioRecorder, GroqTranscriber, InputHandler, Transcriber
+from .core import AudioRecorder, GroqTranscriber, InputHandler, TextProcessor, Transcriber
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
@@ -57,6 +57,9 @@ class SuperWhisperApp(QObject):
         self._transcriber = self._create_transcriber(backend_type)
 
         self._input_handler = InputHandler()
+
+        # Initialize LLM post-processor
+        self._setup_text_processor()
 
     def _create_transcriber(self, backend_type: str):
         """
@@ -120,6 +123,35 @@ class SuperWhisperApp(QObject):
                 duration_ms=3000,
                 is_error=False
             )
+
+    def _setup_text_processor(self) -> None:
+        """Initialize LLM text post-processor."""
+        llm_config = self._config.get("llm_postprocess", {})
+        self._text_processor_enabled = llm_config.get("enabled", False)
+
+        if self._text_processor_enabled:
+            self._text_processor = TextProcessor(
+                provider=llm_config.get("provider", "groq"),
+                model=llm_config.get("model", "llama-3.3-70b-versatile"),
+                system_prompt=llm_config.get("system_prompt", ""),
+                timeout=llm_config.get("timeout", 5.0),
+                fallback_on_error=llm_config.get("fallback_on_error", True),
+            )
+
+            if not self._text_processor.is_available():
+                logger.warning(
+                    f"LLM provider {llm_config.get('provider')} not available. "
+                    "Post-processing disabled."
+                )
+                self._text_processor_enabled = False
+                self._text_processor = None
+            else:
+                logger.info(
+                    f"LLM post-processing enabled: {llm_config.get('provider')} / "
+                    f"{llm_config.get('model')}"
+                )
+        else:
+            self._text_processor = None
 
     def _setup_ui_components(self) -> None:
         """Initialize UI components."""
@@ -197,9 +229,14 @@ class SuperWhisperApp(QObject):
             self._overlay.show_temporary_message("Error", is_error=True)
             return
 
+        # LLM Post-processing
+        if self._text_processor_enabled and self._text_processor:
+            logger.info(f"Raw transcription: {text}")
+            text = self._text_processor.process(text)
+
         logger.info(f"Result: {text}")
         self._input_handler.insert_text(text)
-        
+
         # Return to idle after a short delay
         QTimer.singleShot(1000, lambda: self.status_changed.emit("idle"))
 
@@ -364,6 +401,9 @@ class SuperWhisperApp(QObject):
         
         # Update transcriber settings
         self._update_transcriber_settings()
+
+        # Update LLM post-processor settings
+        self._setup_text_processor()
 
     def _update_transcriber_settings(self) -> None:
         """Update transcriber settings from config."""

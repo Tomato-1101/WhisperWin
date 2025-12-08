@@ -53,6 +53,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "log_prob_threshold": -1.0,
     "no_speech_prob_cutoff": 0.7,
     "beam_size": 5,
+
+    # LLM Post-Processing
+    "llm_postprocess": {
+        "enabled": False,
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "timeout": 5.0,
+        "fallback_on_error": True,
+        "system_prompt": (
+            "音声認識結果を適切に変換してください。"
+            "変換後のテキストのみ返してください。"
+        ),
+    },
 }
 
 # Settings file name

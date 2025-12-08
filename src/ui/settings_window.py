@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QSpinBox,
     QStackedWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
     QToolButton
@@ -292,7 +294,8 @@ class SettingsWindow(QWidget):
         self._add_page("General", self._create_general_page())
         self._add_page("Model", self._create_model_page())
         self._add_page("Advanced", self._create_advanced_page())
-        
+        self._add_page("LLM", self._create_llm_page())
+
         # Select first item
         self._sidebar.setCurrentRow(0)
 
@@ -391,13 +394,95 @@ class SettingsWindow(QWidget):
         # VAD
         self._vad_check = QCheckBox("Enable Voice Activity Detection")
         layout.addRow("", self._vad_check)
-        
+
         # Memory Release
         self._memory_spin = QSpinBox()
         self._memory_spin.setRange(0, 3600)
         self._memory_spin.setSuffix(" sec")
         layout.addRow("Release Memory Delay:", self._memory_spin)
 
+        return page
+
+    def _create_llm_page(self) -> QWidget:
+        """Create LLM post-processing settings page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(20)
+
+        # ===== LLM Settings Group =====
+        llm_settings_group = QGroupBox("LLM Post-Processing Settings")
+        llm_layout = QFormLayout()
+        llm_layout.setSpacing(15)
+        llm_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        # Enable checkbox
+        self._llm_enabled_check = QCheckBox("Enable LLM Post-Processing")
+        self._llm_enabled_check.stateChanged.connect(self._on_llm_enabled_changed)
+        llm_layout.addRow("", self._llm_enabled_check)
+
+        # Provider selection
+        self._llm_provider_combo = QComboBox()
+        self._llm_provider_combo.addItems(["groq", "cerebras"])
+        self._llm_provider_combo.currentTextChanged.connect(self._on_llm_provider_changed)
+        llm_layout.addRow("Provider:", self._llm_provider_combo)
+
+        # Model selection (dynamic based on provider)
+        self._llm_model_combo = QComboBox()
+        llm_layout.addRow("Model:", self._llm_model_combo)
+
+        # Timeout
+        self._llm_timeout_spin = QDoubleSpinBox()
+        self._llm_timeout_spin.setRange(1.0, 30.0)
+        self._llm_timeout_spin.setSingleStep(0.5)
+        self._llm_timeout_spin.setSuffix(" sec")
+        self._llm_timeout_spin.setDecimals(1)
+        llm_layout.addRow("Timeout:", self._llm_timeout_spin)
+
+        # Fallback on error
+        self._llm_fallback_check = QCheckBox("Use original text if LLM fails")
+        llm_layout.addRow("", self._llm_fallback_check)
+
+        llm_settings_group.setLayout(llm_layout)
+        layout.addWidget(llm_settings_group)
+
+        # ===== API Keys Status Group =====
+        api_keys_group = QGroupBox("API Keys Status")
+        api_keys_layout = QFormLayout()
+        api_keys_layout.setSpacing(10)
+        api_keys_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._groq_llm_key_status = QLabel()
+        api_keys_layout.addRow("Groq API Key:", self._groq_llm_key_status)
+
+        self._cerebras_key_status = QLabel()
+        api_keys_layout.addRow("Cerebras API Key:", self._cerebras_key_status)
+
+        api_keys_group.setLayout(api_keys_layout)
+        layout.addWidget(api_keys_group)
+
+        # ===== System Prompt Group =====
+        prompt_group = QGroupBox("System Prompt")
+        prompt_layout = QVBoxLayout()
+
+        prompt_label = QLabel("Define how the LLM should transform transcription results:")
+        prompt_label.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 5px;")
+        prompt_layout.addWidget(prompt_label)
+
+        self._llm_prompt_edit = QTextEdit()
+        self._llm_prompt_edit.setPlaceholderText(
+            "Example:\n"
+            "音声認識結果を以下のルールで変換してください:\n"
+            "1. 数式: 「いち たす にー」→「1 + 2」\n"
+            "2. カタカナ英語: 「アップル」→「Apple」\n"
+            "変換後のテキストのみ返してください。"
+        )
+        self._llm_prompt_edit.setMinimumHeight(150)
+        prompt_layout.addWidget(self._llm_prompt_edit)
+
+        prompt_group.setLayout(prompt_layout)
+        layout.addWidget(prompt_group)
+
+        layout.addStretch()
         return page
 
     def _load_current_settings(self) -> None:
@@ -427,7 +512,25 @@ class SettingsWindow(QWidget):
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
         self._memory_spin.setValue(config.get("release_memory_delay", 300))
-        
+
+        # LLM Settings
+        llm_config = config.get("llm_postprocess", {})
+        self._llm_enabled_check.setChecked(llm_config.get("enabled", False))
+        self._llm_provider_combo.setCurrentText(llm_config.get("provider", "groq"))
+        self._llm_timeout_spin.setValue(llm_config.get("timeout", 5.0))
+        self._llm_fallback_check.setChecked(llm_config.get("fallback_on_error", True))
+        self._llm_prompt_edit.setPlainText(llm_config.get("system_prompt", ""))
+
+        # Update model list and select current model
+        self._on_llm_provider_changed(self._llm_provider_combo.currentText())
+        self._llm_model_combo.setCurrentText(llm_config.get("model", "llama-3.3-70b-versatile"))
+
+        # Initialize enabled state
+        self._on_llm_enabled_changed(self._llm_enabled_check.checkState().value)
+
+        # Update API key status
+        self._update_api_key_status()
+
         # Initialize visibility state
         self._on_backend_changed(self._backend_combo.currentText())
 
@@ -436,6 +539,53 @@ class SettingsWindow(QWidget):
         is_local = (backend == TranscriptionBackend.LOCAL.value)
         self._local_group.setVisible(is_local)
         self._groq_group.setVisible(not is_local)
+
+    def _on_llm_enabled_changed(self, state: int) -> None:
+        """Handle LLM enabled state change."""
+        enabled = (state == Qt.CheckState.Checked.value)
+
+        # Enable/disable all LLM-related widgets
+        self._llm_provider_combo.setEnabled(enabled)
+        self._llm_model_combo.setEnabled(enabled)
+        self._llm_timeout_spin.setEnabled(enabled)
+        self._llm_fallback_check.setEnabled(enabled)
+        self._llm_prompt_edit.setEnabled(enabled)
+
+    def _on_llm_provider_changed(self, provider: str) -> None:
+        """Update model list based on selected provider."""
+        self._llm_model_combo.clear()
+
+        if provider == "groq":
+            models = [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768"
+            ]
+        elif provider == "cerebras":
+            models = [
+                "llama3.1-8b",
+                "llama3.1-70b"
+            ]
+        else:
+            models = []
+
+        self._llm_model_combo.addItems(models)
+
+    def _update_api_key_status(self) -> None:
+        """Update API key status labels."""
+        # Groq
+        has_groq = bool(os.environ.get("GROQ_API_KEY"))
+        groq_text = "✓ Ready" if has_groq else "✗ Not Set"
+        groq_color = "green" if has_groq else "red"
+        self._groq_llm_key_status.setText(groq_text)
+        self._groq_llm_key_status.setStyleSheet(f"color: {groq_color}; font-weight: bold;")
+
+        # Cerebras
+        has_cerebras = bool(os.environ.get("CEREBRAS_API_KEY"))
+        cerebras_text = "✓ Ready" if has_cerebras else "✗ Not Set"
+        cerebras_color = "green" if has_cerebras else "red"
+        self._cerebras_key_status.setText(cerebras_text)
+        self._cerebras_key_status.setStyleSheet(f"color: {cerebras_color}; font-weight: bold;")
 
     def _toggle_theme(self) -> None:
         """Switch between dark and light mode."""
@@ -465,7 +615,17 @@ class SettingsWindow(QWidget):
             "groq_model": self._groq_model_combo.currentText(),
             "vad_filter": self._vad_check.isChecked(),
             "release_memory_delay": self._memory_spin.value(),
-            "dark_mode": self._is_dark_mode # Save theme preference
+            "dark_mode": self._is_dark_mode,  # Save theme preference
+
+            # LLM Post-Processing
+            "llm_postprocess": {
+                "enabled": self._llm_enabled_check.isChecked(),
+                "provider": self._llm_provider_combo.currentText(),
+                "model": self._llm_model_combo.currentText(),
+                "timeout": self._llm_timeout_spin.value(),
+                "fallback_on_error": self._llm_fallback_check.isChecked(),
+                "system_prompt": self._llm_prompt_edit.toPlainText(),
+            },
         }
 
         if self._config_manager.save(new_config):

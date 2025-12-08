@@ -6,6 +6,15 @@ groq_model: whisper-large-v3-turbo
 hotkey: <ctrl>+<space>
 hotkey_mode: hold
 language: ja
+llm_postprocess:
+  enabled: true
+  fallback_on_error: true
+  model: llama-3.3-70b-versatile
+  provider: groq
+  system_prompt: "音声認識結果を以下のルールで変換してください:\n\n1. 数式変換:\n   - 「いち たす にー は さん」→「1 + 2\
+    \ = 3」\n   - 「ごかける よん」→「5 * 4」\n   - 「いちじゅう に」→「1 + 2」\n\n2. カタカナ英語変換:\n   - 「アップル」→「Apple」\n\
+    \   - 「グーグル」→「Google」\n   - 「パイソン」→「Python」\n\n3. 日本語はそのまま維持\n\n変換後のテキストのみ返してください。説明や追加コメントは不要です。\n"
+  timeout: 5.0
 log_prob_threshold: -1.0
 model_cache_dir: D:/whisper_cache
 model_size: large-v3
