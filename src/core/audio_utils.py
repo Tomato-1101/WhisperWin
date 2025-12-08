@@ -1,4 +1,9 @@
-"""Audio format conversion utilities."""
+"""
+音声フォーマット変換ユーティリティ
+
+NumPy配列形式の音声データをWAVファイル形式に変換する機能を提供する。
+Groq APIなど、WAVファイルを要求するサービスへの送信時に使用される。
+"""
 
 import io
 import struct
@@ -14,42 +19,42 @@ def numpy_to_wav_bytes(
     bits_per_sample: int = 16
 ) -> bytes:
     """
-    Convert numpy float32 audio array to WAV format bytes.
-
+    NumPyのfloat32音声配列をWAV形式のバイト列に変換する。
+    
     Args:
-        audio_data: Audio samples as float32 (-1.0 to 1.0).
-        sample_rate: Sample rate in Hz.
-        channels: Number of audio channels (1 for mono, 2 for stereo).
-        bits_per_sample: Bit depth (16 or 32).
-
+        audio_data: float32形式の音声データ（-1.0〜1.0の範囲）
+        sample_rate: サンプリングレート（Hz）
+        channels: チャンネル数（1=モノラル、2=ステレオ）
+        bits_per_sample: ビット深度（16または32）
+    
     Returns:
-        WAV file as bytes.
+        WAVファイル形式のバイト列
     """
-    # float32 [-1.0, 1.0] -> int16 [-32768, 32767]
+    # float32 [-1.0, 1.0] から int16 [-32768, 32767] に変換
     audio_int16 = (audio_data * 32767).astype(np.int16)
 
-    # Build WAV header
+    # WAVヘッダーを構築
     buffer = io.BytesIO()
 
-    # Calculate data size
+    # データサイズを計算
     data_size = len(audio_int16) * channels * (bits_per_sample // 8)
 
-    # RIFF header
+    # RIFFヘッダー（ファイル識別子）
     buffer.write(b'RIFF')
-    buffer.write(struct.pack('<I', 36 + data_size))  # File size - 8
+    buffer.write(struct.pack('<I', 36 + data_size))  # ファイルサイズ - 8
     buffer.write(b'WAVE')
 
-    # fmt chunk
+    # fmtチャンク（フォーマット情報）
     buffer.write(b'fmt ')
-    buffer.write(struct.pack('<I', 16))              # fmt chunk size
-    buffer.write(struct.pack('<H', 1))               # PCM format
-    buffer.write(struct.pack('<H', channels))        # Number of channels
-    buffer.write(struct.pack('<I', sample_rate))     # Sample rate
-    buffer.write(struct.pack('<I', sample_rate * channels * (bits_per_sample // 8)))  # Byte rate
-    buffer.write(struct.pack('<H', channels * (bits_per_sample // 8)))  # Block size
-    buffer.write(struct.pack('<H', bits_per_sample)) # Bit depth
+    buffer.write(struct.pack('<I', 16))              # fmtチャンクサイズ
+    buffer.write(struct.pack('<H', 1))               # PCMフォーマット
+    buffer.write(struct.pack('<H', channels))        # チャンネル数
+    buffer.write(struct.pack('<I', sample_rate))     # サンプリングレート
+    buffer.write(struct.pack('<I', sample_rate * channels * (bits_per_sample // 8)))  # バイトレート
+    buffer.write(struct.pack('<H', channels * (bits_per_sample // 8)))  # ブロックサイズ
+    buffer.write(struct.pack('<H', bits_per_sample)) # ビット深度
 
-    # data chunk
+    # dataチャンク（音声データ本体）
     buffer.write(b'data')
     buffer.write(struct.pack('<I', data_size))
     buffer.write(audio_int16.tobytes())

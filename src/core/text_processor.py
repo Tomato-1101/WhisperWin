@@ -1,0 +1,211 @@
+"""
+LLMテキスト後処理モジュール
+
+Groq/Cerebrasの高速推論APIを使用して、
+音声認識結果をLLMで整形・変換する機能を提供する。
+フィラー除去、数式変換、カタカナ英語変換などに対応。
+"""
+
+import os
+from typing import Optional
+
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# SDK利用可否フラグ（遅延インポート）
+_groq_available: bool = False
+_cerebras_available: bool = False
+
+# Groq SDKのインポート試行
+try:
+    from groq import Groq
+    _groq_available = True
+except ImportError:
+    Groq = None
+
+# Cerebras SDKのインポート試行
+try:
+    from cerebras.cloud.sdk import Cerebras
+    _cerebras_available = True
+except ImportError:
+    Cerebras = None
+
+
+class TextProcessor:
+    """
+    LLMベースのテキスト後処理クラス。
+    
+    Groq/CerebrasのAPIを使用して、文字起こし結果を整形する。
+    フィラー除去、数式変換、言い直し修正などを自動で行う。
+    
+    Attributes:
+        provider: 使用するLLMプロバイダー（'groq' or 'cerebras'）
+        model: 使用するモデル名
+        system_prompt: システムプロンプト
+        timeout: APIタイムアウト（秒）
+        fallback_on_error: エラー時に元テキストを返すかどうか
+        last_api_time: 最後のAPI呼び出し時間（ミリ秒）
+    """
+
+    def __init__(
+        self,
+        provider: str = "groq",
+        model: str = "llama-3.3-70b-versatile",
+        system_prompt: str = "",
+        timeout: float = 5.0,
+        fallback_on_error: bool = True,
+    ) -> None:
+        """
+        TextProcessorを初期化する。
+        
+        Args:
+            provider: LLMプロバイダー（'groq' or 'cerebras'）
+            model: モデル名
+            system_prompt: システムプロンプト（整形ルール）
+            timeout: APIタイムアウト（秒）
+            fallback_on_error: エラー時に元テキストを返す場合True
+        """
+        self.provider = provider
+        self.model = model
+        self.system_prompt = system_prompt
+        self.timeout = timeout
+        self.fallback_on_error = fallback_on_error
+
+        # 各プロバイダーのクライアント（遅延初期化）
+        self._groq_client: Optional[Groq] = None
+        self._cerebras_client: Optional[Cerebras] = None
+
+    def is_available(self) -> bool:
+        """
+        設定されたプロバイダーが利用可能かを確認する。
+        
+        Returns:
+            SDKがインストール済みでAPIキーが設定されている場合True
+        """
+        if self.provider == "groq":
+            return _groq_available and bool(os.environ.get("GROQ_API_KEY"))
+        elif self.provider == "cerebras":
+            return _cerebras_available and bool(os.environ.get("CEREBRAS_API_KEY"))
+        return False
+
+    def _get_groq_client(self) -> "Groq":
+        """Groqクライアントを取得または作成する。"""
+        if self._groq_client is None:
+            api_key = os.environ.get("GROQ_API_KEY")
+            if not api_key:
+                raise RuntimeError("GROQ_API_KEY が設定されていません")
+            self._groq_client = Groq(api_key=api_key, timeout=self.timeout)
+        return self._groq_client
+
+    def _get_cerebras_client(self) -> "Cerebras":
+        """Cerebrasクライアントを取得または作成する。"""
+        if self._cerebras_client is None:
+            api_key = os.environ.get("CEREBRAS_API_KEY")
+            if not api_key:
+                raise RuntimeError("CEREBRAS_API_KEY が設定されていません")
+            # Cerebrasクライアントはコンストラクタでtimeoutをサポートしない
+            self._cerebras_client = Cerebras(api_key=api_key)
+        return self._cerebras_client
+
+    def process(self, text: str) -> str:
+        """
+        テキストをLLMで処理する。
+        
+        Args:
+            text: 入力テキスト（文字起こし結果）
+        
+        Returns:
+            変換後テキスト。エラー時はfallback_on_errorに応じて元テキストまたは空文字
+        """
+        # タイミング情報をリセット
+        self.last_api_time = 0
+        
+        if not text or not text.strip():
+            return text
+
+        if not self.is_available():
+            logger.warning(f"LLMプロバイダー {self.provider} が利用できません")
+            return text if self.fallback_on_error else ""
+
+        try:
+            if self.provider == "groq":
+                return self._process_with_groq(text)
+            elif self.provider == "cerebras":
+                return self._process_with_cerebras(text)
+            else:
+                logger.error(f"不明なプロバイダー: {self.provider}")
+                return text if self.fallback_on_error else ""
+        except Exception as e:
+            logger.error(f"LLM処理エラー: {e}")
+            return text if self.fallback_on_error else ""
+
+    def _build_messages(self, text: str) -> list:
+        """
+        APIリクエスト用のメッセージリストを構築する。
+        
+        入力テキストをXMLタグでマークして、
+        プロンプトインジェクションを防止する。
+        
+        Args:
+            text: 入力テキスト
+            
+        Returns:
+            system/userメッセージのリスト
+        """
+        # XMLタグで入力を明確に区別
+        marked_text = f"<transcription>{text}</transcription>"
+        return [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": marked_text},
+        ]
+
+    def _process_with_groq(self, text: str) -> str:
+        """
+        Groq APIでテキストを処理する。
+        
+        Args:
+            text: 入力テキスト
+            
+        Returns:
+            変換後テキスト
+        """
+        import time
+        client = self._get_groq_client()
+
+        api_start = time.perf_counter()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=self._build_messages(text),
+            temperature=0.0,  # 決定論的な出力
+            max_tokens=len(text) * 3,  # 入力の3倍まで
+        )
+        self.last_api_time = (time.perf_counter() - api_start) * 1000
+
+        result = response.choices[0].message.content.strip()
+        logger.debug(f"LLM変換: '{text}' -> '{result}'")
+        return result
+
+    def _process_with_cerebras(self, text: str) -> str:
+        """
+        Cerebras APIでテキストを処理する。
+        
+        Args:
+            text: 入力テキスト
+            
+        Returns:
+            変換後テキスト
+        """
+        import time
+        client = self._get_cerebras_client()
+
+        api_start = time.perf_counter()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=self._build_messages(text),
+        )
+        self.last_api_time = (time.perf_counter() - api_start) * 1000
+
+        result = response.choices[0].message.content.strip()
+        logger.debug(f"LLM変換: '{text}' -> '{result}'")
+        return result

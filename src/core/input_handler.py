@@ -1,4 +1,10 @@
-"""Text input handling via clipboard and keyboard simulation."""
+"""
+テキスト入力ハンドラーモジュール
+
+クリップボードとキーボードシミュレーションを使用して、
+文字起こし結果をアクティブなウィンドウに入力する機能を提供する。
+日本語などのマルチバイト文字にも対応。
+"""
 
 import time
 
@@ -9,69 +15,70 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Clipboard paste delay (seconds)
+# クリップボード貼り付け前の待機時間（秒）
 PASTE_DELAY: float = 0.1
 
 
 class InputHandler:
     """
-    Handles text input simulation.
+    テキスト入力シミュレーションを管理するクラス。
     
-    Uses clipboard copy + Ctrl+V paste for reliable text insertion,
-    especially for non-ASCII characters like Japanese text.
+    クリップボード経由でCtrl+Vを使用することで、
+    日本語や中国語などのマルチバイト文字を確実に入力できる。
     """
     
     def __init__(self) -> None:
-        """Initialize InputHandler with keyboard controller."""
+        """キーボードコントローラーを初期化する。"""
         self._keyboard = Controller()
 
     def insert_text(self, text: str) -> bool:
         """
-        Insert text into the active window.
+        アクティブウィンドウにテキストを挿入する。
         
-        Uses clipboard copy + Ctrl+V paste for reliability with
-        multibyte characters (Japanese, Chinese, etc.).
+        クリップボード経由でCtrl+Vを使用することで、
+        マルチバイト文字を確実に入力できる。
         
         Args:
-            text: Text to insert.
+            text: 挿入するテキスト
             
         Returns:
-            True if successful, False otherwise.
+            成功した場合True、失敗した場合False
         """
         if not text:
             return False
 
         try:
-            # Copy to clipboard
+            # クリップボードにコピー
             pyperclip.copy(text)
             
-            # Small delay to ensure clipboard is ready
+            # クリップボードの準備が整うまで少し待機
             time.sleep(PASTE_DELAY)
             
-            # Simulate Ctrl+V
+            # Ctrl+V をシミュレート
             with self._keyboard.pressed(Key.ctrl):
                 self._keyboard.press('v')
                 self._keyboard.release('v')
             
-            logger.debug(f"Inserted text: {text[:50]}...")
+            logger.debug(f"テキスト挿入: {text[:50]}...")
             return True
             
         except Exception as e:
-            logger.error(f"Error inserting text: {e}")
+            logger.error(f"テキスト挿入エラー: {e}")
             return False
 
     def type_text(self, text: str) -> bool:
         """
-        Type text character by character.
+        テキストを1文字ずつ入力する。
         
-        Note: This method is slower and less reliable with non-ASCII text.
-        Prefer insert_text() for most use cases.
+        注意: この方法はinsert_text()より遅く、
+        非ASCII文字では信頼性が低いため、
+        通常はinsert_text()の使用を推奨。
         
         Args:
-            text: Text to type.
+            text: 入力するテキスト
             
         Returns:
-            True if successful, False otherwise.
+            成功した場合True、失敗した場合False
         """
         if not text:
             return False
@@ -80,5 +87,5 @@ class InputHandler:
             self._keyboard.type(text)
             return True
         except Exception as e:
-            logger.error(f"Error typing text: {e}")
+            logger.error(f"テキスト入力エラー: {e}")
             return False

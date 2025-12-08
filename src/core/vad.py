@@ -1,4 +1,9 @@
-"""Voice Activity Detection (VAD) using silero-vad package with CUDA support."""
+"""
+音声活性検出（VAD）モジュール
+
+Silero VADを使用して音声に発話が含まれるかを検出する。
+CUDA対応でGPU高速化が可能。Groqモードでの無音判定に使用される。
+"""
 
 import torch
 import numpy as np
@@ -11,9 +16,15 @@ logger = get_logger(__name__)
 
 class VadFilter:
     """
-    Filters audio based on Voice Activity Detection.
+    音声活性検出（VAD）フィルター。
     
-    Uses silero-vad package for CUDA-accelerated inference.
+    Silero VADを使用して、音声データに発話が含まれるかを判定する。
+    発話が検出されない場合、API呼び出しをスキップして効率化できる。
+    
+    Attributes:
+        min_silence_duration_ms: 無音と判定する最小継続時間（ミリ秒）
+        use_cuda: CUDAを使用するかどうか
+        device: 使用デバイス（'cuda' or 'cpu'）
     """
     
     def __init__(
@@ -22,65 +33,65 @@ class VadFilter:
         use_cuda: bool = True
     ) -> None:
         """
-        Initialize VAD filter.
+        VADフィルターを初期化する。
         
         Args:
-            min_silence_duration_ms: Minimum silence duration to consider end of speech.
-            use_cuda: Whether to use CUDA for VAD inference.
+            min_silence_duration_ms: 発話終了と判定する最小無音時間（ミリ秒）
+            use_cuda: CUDA使用フラグ（利用可能な場合のみ有効）
         """
         self.min_silence_duration_ms = min_silence_duration_ms
         self.use_cuda = use_cuda and torch.cuda.is_available()
-        self._model = None
+        self._model = None  # 遅延ロード用
         
-        # Set device
+        # デバイス設定
         self.device = 'cuda' if self.use_cuda else 'cpu'
-        logger.info(f"VAD Filter initialized (device: {self.device})")
+        logger.info(f"VADフィルター初期化 (デバイス: {self.device})")
         
     def _load_model(self):
-        """Load the Silero VAD model lazily."""
+        """Silero VADモデルを遅延ロードする。"""
         if self._model is None:
             try:
                 from silero_vad import load_silero_vad
                 
-                # Load model - silero-vad package handles loading
+                # モデルをロード
                 self._model = load_silero_vad()
                 
-                # Move to device if CUDA
+                # CUDAデバイスに移動
                 if self.use_cuda:
                     self._model = self._model.to(self.device)
                 
-                logger.info(f"Silero VAD model loaded on {self.device}")
+                logger.info(f"Silero VADモデルをロード ({self.device})")
                 
             except Exception as e:
-                logger.error(f"Failed to load Silero VAD model: {e}")
+                logger.error(f"Silero VADモデルのロードに失敗: {e}")
                 raise
     
     def has_speech(self, audio_data: npt.NDArray[np.float32], sample_rate: int = 16000) -> bool:
         """
-        Check if the audio contains speech.
+        音声データに発話が含まれるかを判定する。
         
         Args:
-            audio_data: Audio samples as numpy array (float32).
-            sample_rate: Sample rate of the audio.
+            audio_data: 音声データ（float32のNumPy配列）
+            sample_rate: サンプリングレート（Hz）
             
         Returns:
-            True if speech is detected, False otherwise.
+            発話が検出された場合True、無音の場合False
         """
         if len(audio_data) == 0:
             return False
         
-        # Ensure model is loaded
+        # モデルをロード（未ロードの場合）
         self._load_model()
             
         try:
             from silero_vad import get_speech_timestamps
             
-            # Convert to tensor
+            # NumPy配列をTensorに変換
             audio_tensor = torch.from_numpy(audio_data)
             if self.use_cuda:
                 audio_tensor = audio_tensor.to(self.device)
             
-            # Get speech timestamps
+            # 発話区間を検出
             speech_timestamps = get_speech_timestamps(
                 audio_tensor,
                 self._model,
@@ -90,10 +101,10 @@ class VadFilter:
             )
             
             has_speech = len(speech_timestamps) > 0
-            logger.debug(f"VAD result: has_speech={has_speech}, segments={len(speech_timestamps)}")
+            logger.debug(f"VAD結果: has_speech={has_speech}, セグメント数={len(speech_timestamps)}")
             return has_speech
             
         except Exception as e:
-            logger.error(f"VAD error: {e}")
-            # If VAD fails, default to True (allow transcription) to be safe
+            logger.error(f"VADエラー: {e}")
+            # エラー時は安全側に倒してTrueを返す（文字起こしを実行）
             return True

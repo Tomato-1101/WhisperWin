@@ -1,24 +1,56 @@
 """
-Shared styles and theme definitions for the macOS-like UI.
+UIスタイル・テーマ定義モジュール
+
+macOS風のUIテーマ（カラー、フォント、スタイルシート）を定義する。
+ダークモード/ライトモードの切り替えに対応。
 """
 
 from PySide6.QtGui import QColor, QFont
 
-class MacTheme:
-    """macOS-inspired theme colors and fonts."""
-    
-    # Common Fonts
-    FONT_FAMILY = "Segoe UI"
-    FONT_SIZE_NORMAL = 13
 
-    # Theme Colors
+class MacTheme:
+    """
+    macOS風テーマのカラーとフォント定義。
+    
+    ダークモード/ライトモードに対応したカラーパレットと、
+    Qt全体に適用するスタイルシートを提供する。
+    """
+    
+    # 共通フォント設定
+    FONT_FAMILY = "Segoe UI"     # Windows環境向けフォント
+    FONT_SIZE_NORMAL = 13        # 標準フォントサイズ
+
     class Colors:
+        """
+        テーマ別カラーパレット。
+        
+        Attributes:
+            BACKGROUND: 全体背景色
+            WINDOW_BG: ウィンドウ背景色
+            TEXT: テキスト色
+            ACCENT: アクセントカラー
+            ACCENT_HOVER: アクセントカラー（ホバー時）
+            SECONDARY_TEXT: 二次テキスト色
+            BORDER: ボーダー色
+            SIDEBAR_BG: サイドバー背景色
+            SIDEBAR_BORDER: サイドバーボーダー色
+            INPUT_BG: 入力欄背景色
+            HOVER_BG: ホバー時背景色
+        """
+        
         def __init__(self, is_dark: bool):
+            """
+            カラーパレットを初期化する。
+            
+            Args:
+                is_dark: ダークモードの場合True
+            """
             if is_dark:
+                # ダークモードカラー
                 self.BACKGROUND = "#1E1E1E"
                 self.WINDOW_BG = "#2D2D2D"
                 self.TEXT = "#FFFFFF"
-                self.ACCENT = "#0A84FF"  # Lighter blue for dark mode
+                self.ACCENT = "#0A84FF"  # ダークモード用明るい青
                 self.ACCENT_HOVER = "#409CFF"
                 self.SECONDARY_TEXT = "#A1A1A6"
                 self.BORDER = "#424242"
@@ -27,6 +59,7 @@ class MacTheme:
                 self.INPUT_BG = "#1E1E1E"
                 self.HOVER_BG = "rgba(255, 255, 255, 0.1)"
             else:
+                # ライトモードカラー
                 self.BACKGROUND = "#F5F5F7"
                 self.WINDOW_BG = "#FFFFFF"
                 self.TEXT = "#1D1D1F"
@@ -41,10 +74,19 @@ class MacTheme:
 
     @staticmethod
     def get_stylesheet(dark_mode: bool = False) -> str:
-        """Return the global stylesheet for the application."""
+        """
+        アプリケーション全体に適用するスタイルシートを取得する。
+        
+        Args:
+            dark_mode: ダークモードの場合True
+            
+        Returns:
+            Qt用スタイルシート文字列
+        """
         c = MacTheme.Colors(dark_mode)
         
         return f"""
+        /* 基本ウィジェット */
         QWidget {{
             font-family: '{MacTheme.FONT_FAMILY}';
             font-size: {MacTheme.FONT_SIZE_NORMAL}px;
@@ -52,7 +94,7 @@ class MacTheme:
             background-color: {c.BACKGROUND};
         }}
         
-        /* Buttons */
+        /* ボタン */
         QPushButton {{
             background-color: {c.WINDOW_BG};
             border: 1px solid {c.BORDER};
@@ -80,7 +122,7 @@ class MacTheme:
             background-color: {c.ACCENT_HOVER};
         }}
         
-        /* Inputs & ComboBox */
+        /* 入力欄・コンボボックス */
         QLineEdit, QComboBox, QSpinBox {{
             background-color: {c.INPUT_BG};
             border: 1px solid {c.BORDER};
@@ -95,7 +137,7 @@ class MacTheme:
             padding: 4px 9px;
         }}
         
-        /* ComboBox Dropdown */
+        /* コンボボックス ドロップダウン */
         QComboBox::drop-down {{
             subcontrol-origin: padding;
             subcontrol-position: top right;
@@ -138,7 +180,7 @@ class MacTheme:
             color: white;
         }}
 
-        /* Menus */
+        /* メニュー */
         QMenu {{
             background-color: {c.WINDOW_BG};
             border: 1px solid {c.BORDER};
@@ -155,7 +197,7 @@ class MacTheme:
             color: white;
         }}
 
-        /* CheckBox */
+        /* チェックボックス */
         QCheckBox {{
             spacing: 8px;
         }}
@@ -172,25 +214,66 @@ class MacTheme:
             image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIi8+PC9zdmc+);
         }}
         
-        /* GroupBox */
+        /* テキストエリア */
+        QTextEdit {{
+            background-color: {c.INPUT_BG};
+            color: {c.TEXT};
+            border: 1px solid {c.BORDER};
+            border-radius: 6px;
+            padding: 8px;
+            font-family: '{MacTheme.FONT_FAMILY}';
+            font-size: {MacTheme.FONT_SIZE_NORMAL}px;
+            selection-background-color: {c.ACCENT};
+        }}
+        QTextEdit:focus {{
+            border: 2px solid {c.ACCENT};
+            padding: 7px;
+        }}
+
+        /* ダブルスピンボックス */
+        QDoubleSpinBox {{
+            background-color: {c.INPUT_BG};
+            border: 1px solid {c.BORDER};
+            border-radius: 6px;
+            padding: 5px 10px;
+            selection-background-color: {c.ACCENT};
+            color: {c.TEXT};
+            min-height: 22px;
+        }}
+        QDoubleSpinBox:focus {{
+            border: 2px solid {c.ACCENT};
+            padding: 4px 9px;
+        }}
+
+        /* プレースホルダーテキスト */
+        QLineEdit::placeholder, QTextEdit::placeholder {{
+            color: {c.SECONDARY_TEXT};
+            font-style: italic;
+        }}
+
+        /* グループボックス */
         QGroupBox {{
             background-color: {c.WINDOW_BG};
             border: 1px solid {c.BORDER};
             border-radius: 8px;
-            margin-top: 24px;
-            padding: 16px;
-            font-size: 13px;
+            margin-top: 16px;
+            padding-top: 20px;
+            padding-bottom: 16px;
+            padding-left: 16px;
+            padding-right: 16px;
+            font-size: 14px;
+            font-weight: 600;
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
             subcontrol-position: top left;
-            padding: 0 4px;
+            padding: 0 5px;
             color: {c.TEXT};
             font-weight: 600;
-            left: 10px;
+            left: 12px;
         }}
         
-        /* Sidebar List */
+        /* サイドバーリスト */
         QListWidget {{
             background-color: {c.SIDEBAR_BG};
             border: none;
@@ -217,7 +300,7 @@ class MacTheme:
             background-color: {c.HOVER_BG};
         }}
         
-        /* Scrollbar */
+        /* スクロールバー */
         QScrollBar:vertical {{
             border: none;
             background: transparent;

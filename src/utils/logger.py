@@ -1,13 +1,18 @@
-"""Centralized logging configuration for the application."""
+"""
+ロギングモジュール
+
+アプリケーション全体で使用されるロギング機能を提供する。
+コンソールとファイルへの同時出力に対応。
+"""
 
 import logging
 import sys
 from typing import Dict, Optional
 
-# Default log format
+# デフォルトのログフォーマット
 LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-# Singleton logger instances
+# シングルトンロガーインスタンス
 _loggers: Dict[str, logging.Logger] = {}
 _is_configured: bool = False
 
@@ -18,15 +23,16 @@ def setup_logger(
     format_string: str = LOG_FORMAT
 ) -> None:
     """
-    Configure the root logger with console and file handlers.
+    ルートロガーをコンソールとファイルハンドラーで設定する。
     
     Args:
-        log_file: Path to the log file. None disables file logging.
-        level: Logging level (default: INFO).
-        format_string: Log message format.
+        log_file: ログファイルパス。Noneでファイル出力を無効化
+        level: ログレベル（デフォルト: INFO）
+        format_string: ログメッセージフォーマット
     """
     global _is_configured
     
+    # 二重設定を防止
     if _is_configured:
         return
     
@@ -46,13 +52,13 @@ def setup_logger(
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get a logger instance by name, with caching.
+    名前でロガーインスタンスを取得する（キャッシュ付き）。
     
     Args:
-        name: Logger name (typically __name__).
+        name: ロガー名（通常は__name__）
         
     Returns:
-        Configured logger instance.
+        設定済みのロガーインスタンス
     """
     if name not in _loggers:
         _loggers[name] = logging.getLogger(name)

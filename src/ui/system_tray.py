@@ -1,4 +1,9 @@
-"""System tray icon with status indication and menu."""
+"""
+システムトレイモジュール
+
+タスクバー通知領域にアイコンを表示し、
+アプリケーション状態の表示とコンテキストメニューを提供する。
+"""
 
 from typing import Union
 
@@ -11,28 +16,32 @@ from ..config.types import AppState
 
 class SystemTray(QSystemTrayIcon):
     """
-    System tray icon with dynamic status indication.
+    動的ステータス表示付きシステムトレイアイコン。
     
-    Provides status display via colored icon and context menu
-    for settings and quit actions.
+    アプリケーション状態に応じてアイコンの色が変化し、
+    設定画面や終了へのアクセスをコンテキストメニューで提供する。
+    
+    Signals:
+        open_settings: 設定を開く要求
+        quit_app: アプリケーション終了要求
     """
     
-    # Signals for menu actions
+    # メニューアクション用シグナル
     open_settings = Signal()
     quit_app = Signal()
     
-    # Icon colors for different states
+    # 状態別アイコンカラー
     ICON_COLORS = {
-        AppState.IDLE: QColor("dodgerblue"),
-        AppState.RECORDING: QColor("red"),
-        AppState.TRANSCRIBING: QColor("orange"),
+        AppState.IDLE: QColor("dodgerblue"),        # 待機中：青
+        AppState.RECORDING: QColor("red"),           # 録音中：赤
+        AppState.TRANSCRIBING: QColor("orange"),     # 文字起こし中：オレンジ
     }
     
-    # Icon size
+    # アイコンサイズ（ピクセル）
     ICON_SIZE = 64
     
     def __init__(self, parent=None) -> None:
-        """Initialize the system tray icon."""
+        """システムトレイアイコンを初期化する。"""
         super().__init__(parent)
         
         self._setup_icon()
@@ -42,47 +51,48 @@ class SystemTray(QSystemTrayIcon):
         self.show()
 
     def _setup_icon(self) -> None:
-        """Set up the initial icon."""
+        """初期アイコンを設定する。"""
         self._set_icon_color(self.ICON_COLORS[AppState.IDLE])
 
     def _setup_menu(self) -> None:
-        """Set up the context menu."""
+        """コンテキストメニューを設定する。"""
         self._menu = QMenu()
         
-        # Settings action
+        # 設定メニュー項目
         settings_action = self._menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings.emit)
         
         self._menu.addSeparator()
         
-        # Quit action
+        # 終了メニュー項目
         quit_action = self._menu.addAction("Quit")
         quit_action.triggered.connect(self.quit_app.emit)
         
         self.setContextMenu(self._menu)
 
     def _setup_click_handler(self) -> None:
-        """Set up the click handler."""
+        """クリックハンドラーを設定する。"""
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """
-        Handle tray icon activation.
-
+        トレイアイコンのアクティベーションを処理する。
+        
         Args:
-            reason: The type of activation that occurred (click, double-click, etc.).
+            reason: アクティベーションの種類（クリック、ダブルクリック等）
         """
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            # シングルクリックで設定を開く
             self.open_settings.emit()
 
     def set_status(self, status: Union[str, AppState]) -> None:
         """
-        Update icon based on application status.
+        アプリケーション状態に応じてアイコンを更新する。
         
         Args:
-            status: Current application state.
+            status: 現在のアプリケーション状態
         """
-        # Convert string to AppState if needed
+        # 文字列の場合はAppStateに変換
         if isinstance(status, str):
             status = AppState(status)
         
@@ -94,13 +104,13 @@ class SystemTray(QSystemTrayIcon):
 
     def _get_tooltip(self, status: AppState) -> str:
         """
-        Get tooltip text for the given status.
-
+        状態に応じたツールチップテキストを取得する。
+        
         Args:
-            status: Current application state.
-
+            status: 現在のアプリケーション状態
+            
         Returns:
-            Tooltip text string for the system tray icon.
+            ツールチップ文字列
         """
         tooltips = {
             AppState.IDLE: "SuperWhisper - Ready",
@@ -111,14 +121,14 @@ class SystemTray(QSystemTrayIcon):
 
     def _set_icon_color(self, color: QColor) -> None:
         """
-        Generate and set a colored circle icon.
+        指定色の円形アイコンを生成・設定する。
         
         Args:
-            color: The color for the icon.
+            color: アイコンの色
         """
         size = self.ICON_SIZE
         pixmap = QPixmap(size, size)
-        pixmap.fill(QColor(0, 0, 0, 0))  # Transparent background
+        pixmap.fill(QColor(0, 0, 0, 0))  # 透明背景
         
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

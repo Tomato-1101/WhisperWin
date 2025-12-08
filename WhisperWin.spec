@@ -1,50 +1,49 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
-from PyInstaller.utils.hooks import collect_all
-
-datas = [('settings.yaml', '.')]
+datas = [('src', 'src')]
 binaries = []
 hiddenimports = [
-    'faster_whisper',
-    'silero_vad',
-    'groq',
     'pynput.keyboard._win32',
     'pynput.mouse._win32',
-    'src.app',
-    'src.main',
-    'src.config',
-    'src.config.types',
-    'src.config.constants',
-    'src.config.config_manager',
-    'src.core',
-    'src.core.audio_recorder',
-    'src.core.transcriber',
-    'src.core.groq_transcriber',
-    'src.core.vad',
-    'src.core.input_handler',
-    'src.ui',
-    'src.ui.overlay',
-    'src.ui.settings_window',
-    'src.ui.system_tray',
-    'src.utils',
-    'src.utils.logger',
+    'tzdata',
 ]
 
-# Collect faster_whisper and ctranslate2 dependencies
+# Collect silero_vad with all its data files
+tmp_ret = collect_all('silero_vad')
+datas += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
+
+# Also collect silero_vad submodules explicitly
+hiddenimports += collect_submodules('silero_vad')
+
+# Collect faster_whisper  
 tmp_ret = collect_all('faster_whisper')
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
+# Collect ctranslate2
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
-tmp_ret = collect_all('silero_vad')
+# Collect PySide6 (only core modules needed)
+tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
+
+# Collect scipy if available
+try:
+    tmp_ret = collect_all('scipy')
+    datas += tmp_ret[0]
+    binaries += tmp_ret[1]
+    hiddenimports += tmp_ret[2]
+except:
+    pass
 
 a = Analysis(
     ['run.py'],
@@ -55,7 +54,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PySide6.scripts.deploy_lib'],
     noarchive=False,
     optimize=0,
 )
@@ -66,7 +65,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SuperWhisperLike',
+    name='WhisperWin',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -77,8 +76,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['d:\\project\\WhisperWin\\icon.ico'],
 )
-
 coll = COLLECT(
     exe,
     a.binaries,
@@ -86,5 +85,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SuperWhisperLike',
+    name='WhisperWin',
 )
