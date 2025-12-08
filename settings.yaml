@@ -1,6 +1,7 @@
 beam_size: 5
 compute_type: float16
 condition_on_previous_text: false
+dark_mode: false
 groq_model: whisper-large-v3-turbo
 hotkey: <ctrl>+<space>
 hotkey_mode: hold
