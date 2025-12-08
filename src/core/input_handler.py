@@ -10,7 +10,7 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Clipboard paste delay (seconds)
-PASTE_DELAY = 0.1
+PASTE_DELAY: float = 0.1
 
 
 class InputHandler:

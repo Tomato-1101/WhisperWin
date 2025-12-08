@@ -66,7 +66,12 @@ class SystemTray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        """Handle tray icon activation."""
+        """
+        Handle tray icon activation.
+
+        Args:
+            reason: The type of activation that occurred (click, double-click, etc.).
+        """
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.open_settings.emit()
 
@@ -88,7 +93,15 @@ class SystemTray(QSystemTrayIcon):
         self.setToolTip(tooltip)
 
     def _get_tooltip(self, status: AppState) -> str:
-        """Get tooltip text for the given status."""
+        """
+        Get tooltip text for the given status.
+
+        Args:
+            status: Current application state.
+
+        Returns:
+            Tooltip text string for the system tray icon.
+        """
         tooltips = {
             AppState.IDLE: "SuperWhisper - Ready",
             AppState.RECORDING: "SuperWhisper - Recording",

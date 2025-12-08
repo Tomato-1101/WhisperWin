@@ -1,16 +1,15 @@
 """Centralized logging configuration for the application."""
 
-import sys
 import logging
-from pathlib import Path
-from typing import Optional
+import sys
+from typing import Dict, Optional
 
 # Default log format
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # Singleton logger instances
-_loggers: dict = {}
-_is_configured = False
+_loggers: Dict[str, logging.Logger] = {}
+_is_configured: bool = False
 
 
 def setup_logger(

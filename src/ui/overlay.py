@@ -86,7 +86,12 @@ class DynamicIslandOverlay(QMainWindow):
         self._pulse_timer.timeout.connect(self.update)
 
     def paintEvent(self, event) -> None:
-        """Custom paint event for pill-shaped background with pulse effect."""
+        """
+        Custom paint event for pill-shaped background with pulse effect.
+
+        Args:
+            event: QPaintEvent from Qt framework.
+        """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         

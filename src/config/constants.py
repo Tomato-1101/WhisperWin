@@ -1,28 +1,29 @@
 """Application constants and default configuration values."""
 
-from typing import Dict, Any
-from .types import HotkeyMode, ModelSize, ComputeType
+from typing import Any, Dict
+
+from .types import ComputeType, HotkeyMode, ModelSize
 
 # Application metadata
-APP_NAME = "SuperWhisper"
-APP_VERSION = "1.0.0"
+APP_NAME: str = "SuperWhisper"
+APP_VERSION: str = "1.0.0"
 
 # Audio settings
-SAMPLE_RATE = 16000
-AUDIO_CHANNELS = 1
-AUDIO_DTYPE = "float32"
+SAMPLE_RATE: int = 16000
+AUDIO_CHANNELS: int = 1
+AUDIO_DTYPE: str = "float32"
 
 # UI settings
-OVERLAY_BASE_WIDTH = 120
-OVERLAY_BASE_HEIGHT = 35
-OVERLAY_EXPANDED_WIDTH = 300
-OVERLAY_EXPANDED_HEIGHT = 60
-OVERLAY_TOP_MARGIN = 10
-ANIMATION_DURATION_MS = 400
+OVERLAY_BASE_WIDTH: int = 120
+OVERLAY_BASE_HEIGHT: int = 35
+OVERLAY_EXPANDED_WIDTH: int = 300
+OVERLAY_EXPANDED_HEIGHT: int = 60
+OVERLAY_TOP_MARGIN: int = 10
+ANIMATION_DURATION_MS: int = 400
 
 # Timing
-CONFIG_CHECK_INTERVAL_SEC = 1
-DEFAULT_MEMORY_RELEASE_DELAY_SEC = 300
+CONFIG_CHECK_INTERVAL_SEC: int = 1
+DEFAULT_MEMORY_RELEASE_DELAY_SEC: int = 300
 
 # Default configuration (used when settings.yaml is missing or incomplete)
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -48,4 +49,4 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 # Settings file name
-SETTINGS_FILE_NAME = "settings.yaml"
+SETTINGS_FILE_NAME: str = "settings.yaml"
