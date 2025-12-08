@@ -38,6 +38,12 @@ class AppState(str, Enum):
     TRANSCRIBING = "transcribing"
 
 
+class TranscriptionBackend(str, Enum):
+    """Transcription backend type."""
+    LOCAL = "local"  # faster-whisper (GPU)
+    GROQ = "groq"    # Groq Cloud API
+
+
 @dataclass
 class TranscriberConfig:
     """Configuration for the transcriber module."""

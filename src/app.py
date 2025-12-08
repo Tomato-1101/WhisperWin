@@ -4,13 +4,13 @@ import threading
 import time
 from typing import Any, Optional, Set
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtWidgets import QApplication
 from pynput import keyboard
 
-from .config import ConfigManager, HotkeyMode
+from .config import ConfigManager, HotkeyMode, TranscriptionBackend
 from .config.constants import CONFIG_CHECK_INTERVAL_SEC
-from .core import AudioRecorder, InputHandler, Transcriber
+from .core import AudioRecorder, GroqTranscriber, InputHandler, Transcriber
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
@@ -26,8 +26,8 @@ class SuperWhisperApp(QObject):
     """
     
     # Signals for thread-safe UI updates
-    status_changed = pyqtSignal(str)
-    text_ready = pyqtSignal(str)
+    status_changed = Signal(str)
+    text_ready = Signal(str)
     
     def __init__(self) -> None:
         """Initialize the application."""
@@ -51,7 +51,48 @@ class SuperWhisperApp(QObject):
     def _setup_core_components(self) -> None:
         """Initialize core business logic components."""
         self._recorder = AudioRecorder()
-        self._transcriber = Transcriber(
+
+        # Initialize transcriber based on backend selection
+        backend_type = self._config.get("transcription_backend", "local")
+        self._transcriber = self._create_transcriber(backend_type)
+
+        self._input_handler = InputHandler()
+
+    def _create_transcriber(self, backend_type: str):
+        """
+        Create appropriate transcriber based on backend type.
+
+        Args:
+            backend_type: "local" or "groq"
+
+        Returns:
+            Transcriber instance (either Transcriber or GroqTranscriber).
+        """
+        if backend_type == TranscriptionBackend.GROQ.value:
+            transcriber = GroqTranscriber(
+                model=self._config.get("groq_model", "whisper-large-v3-turbo"),
+                language=self._config.get("language", "ja"),
+                vad_filter=self._config.get("vad_filter", True),
+                vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
+            )
+
+            if not transcriber.is_available():
+                logger.warning(
+                    "Groq API not available (SDK not installed or GROQ_API_KEY not set). "
+                    "Falling back to local GPU transcription."
+                )
+                self._show_backend_warning("groq_unavailable")
+                return self._create_local_transcriber()
+
+            logger.info(f"Using Groq API backend with model: {transcriber.model}")
+            return transcriber
+        else:
+            return self._create_local_transcriber()
+
+    def _create_local_transcriber(self) -> Transcriber:
+        """Create local GPU transcriber."""
+        logger.info("Using local GPU backend (faster-whisper)")
+        return Transcriber(
             model_size=self._config.get("model_size"),
             compute_type=self._config.get("compute_type", "float16"),
             language=self._config.get("language"),
@@ -65,7 +106,20 @@ class SuperWhisperApp(QObject):
             beam_size=self._config.get("beam_size", 5),
             model_cache_dir=self._config.get("model_cache_dir", ""),
         )
-        self._input_handler = InputHandler()
+
+    def _show_backend_warning(self, warning_type: str) -> None:
+        """
+        Show warning message to user about backend issues.
+
+        Args:
+            warning_type: Type of warning ("groq_unavailable", etc.)
+        """
+        if warning_type == "groq_unavailable":
+            self._overlay.show_temporary_message(
+                "Groq API unavailable\nUsing local GPU",
+                duration_ms=3000,
+                is_error=False
+            )
 
     def _setup_ui_components(self) -> None:
         """Initialize UI components."""
@@ -313,9 +367,35 @@ class SuperWhisperApp(QObject):
 
     def _update_transcriber_settings(self) -> None:
         """Update transcriber settings from config."""
+        new_backend = self._config.get("transcription_backend", "local")
+        current_backend = "groq" if isinstance(self._transcriber, GroqTranscriber) else "local"
+
+        # Backend changed - recreate transcriber
+        if new_backend != current_backend:
+            logger.info(f"Switching transcription backend: {current_backend} -> {new_backend}")
+
+            # Unload old transcriber
+            if hasattr(self._transcriber, 'unload_model'):
+                self._transcriber.unload_model()
+
+            # Create new transcriber
+            self._transcriber = self._create_transcriber(new_backend)
+            return
+
+        # Same backend - update settings
+        if current_backend == "local":
+            self._update_local_transcriber_settings()
+        else:
+            self._update_groq_transcriber_settings()
+
+    def _update_local_transcriber_settings(self) -> None:
+        """Update local transcriber settings."""
+        if not isinstance(self._transcriber, Transcriber):
+            return
+
         new_model_size = self._config.get("model_size")
         model_changed = new_model_size != self._transcriber.model_size
-        
+
         # Update settings
         self._transcriber.model_size = new_model_size
         self._transcriber.compute_type = self._config.get("compute_type", "float16")
@@ -328,12 +408,39 @@ class SuperWhisperApp(QObject):
         self._transcriber.log_prob_threshold = self._config.get("log_prob_threshold", -1.0)
         self._transcriber.no_speech_prob_cutoff = self._config.get("no_speech_prob_cutoff", 0.7)
         self._transcriber.beam_size = self._config.get("beam_size", 5)
-        
+
         new_cache_dir = self._config.get("model_cache_dir", "")
         self._transcriber.model_cache_dir = new_cache_dir or None
-        
+
         # Unload model if settings changed
         if model_changed:
             if self._transcriber.model is not None:
                 logger.info("Model settings changed, unloading model for reload...")
                 self._transcriber.unload_model()
+
+    def _update_groq_transcriber_settings(self) -> None:
+        """Update Groq transcriber settings."""
+        if not isinstance(self._transcriber, GroqTranscriber):
+            return
+
+        # Update Groq settings
+        self._transcriber.model = self._config.get("groq_model", "whisper-large-v3-turbo")
+        self._transcriber.language = self._config.get("language", "ja")
+        
+        # Update VAD settings
+        vad_filter_enabled = self._config.get("vad_filter", True)
+        vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
+        
+        # Check if VAD settings changed
+        if vad_filter_enabled != self._transcriber.vad_enabled:
+            self._transcriber.vad_enabled = vad_filter_enabled
+            if vad_filter_enabled and self._transcriber._vad_filter is None:
+                from .core.vad import VadFilter
+                self._transcriber._vad_filter = VadFilter(
+                    min_silence_duration_ms=vad_min_silence,
+                    use_cuda=True
+                )
+            elif not vad_filter_enabled:
+                self._transcriber._vad_filter = None
+        
+        logger.debug(f"Updated Groq settings: model={self._transcriber.model}, vad={vad_filter_enabled}")

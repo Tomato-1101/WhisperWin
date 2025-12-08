@@ -2,9 +2,9 @@
 
 from typing import Union
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
-from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from ..config.constants import (
     ANIMATION_DURATION_MS,

@@ -1,9 +1,10 @@
 # OpenAI Whisper for GPU
 faster-whisper
 tokenizers==0.14.1
-# PyTorch with CUDA 12.1 support - install separately:
-# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
---extra-index-url https://download.pytorch.org/whl/cu121
+
+# PyTorch with CUDA 12.1 support (GPU required)
+# Install with: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+--index-url https://download.pytorch.org/whl/cu121
 torch
 torchaudio
 numpy
@@ -13,9 +14,18 @@ pyperclip
 pyyaml
 scipy
 
+# VAD (Voice Activity Detection)
+silero-vad
+
 # Optional but recommended
 ffmpeg-python
 
 # GUI & Packaging
-PyQt6
+PySide6
 pyinstaller
+
+# Groq API (Cloud transcription)
+groq>=0.4.0
+
+# Environment variable management
+python-dotenv>=1.0.0

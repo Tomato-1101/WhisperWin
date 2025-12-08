@@ -3,13 +3,17 @@
 import sys
 import traceback
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from dotenv import load_dotenv
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
-from .utils.logger import setup_logger, get_logger
 from .app import SuperWhisperApp
+from .utils.logger import get_logger, setup_logger
 
-# Setup logging first
+# Load environment variables from .env file
+load_dotenv()
+
+# Setup logging
 setup_logger(log_file="startup_log.txt")
 logger = get_logger(__name__)
 

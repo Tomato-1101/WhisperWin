@@ -174,6 +174,6 @@ settings.yaml              # 設定ファイル
 
 - **faster-whisper**: 高速な音声認識エンジン
 - **PyTorch (CUDA)**: GPU加速
-- **PyQt6**: モダンなGUIフレームワーク
+- **PySide6**: モダンなGUIフレームワーク
 - **pynput**: グローバルホットキー管理
 - **sounddevice**: オーディオ録音

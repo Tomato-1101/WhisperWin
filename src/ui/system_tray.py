@@ -2,9 +2,9 @@
 
 from typing import Union
 
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..config.types import AppState
 
@@ -18,8 +18,8 @@ class SystemTray(QSystemTrayIcon):
     """
     
     # Signals for menu actions
-    open_settings = pyqtSignal()
-    quit_app = pyqtSignal()
+    open_settings = Signal()
+    quit_app = Signal()
     
     # Icon colors for different states
     ICON_COLORS = {

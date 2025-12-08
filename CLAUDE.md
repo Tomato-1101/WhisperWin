@@ -46,7 +46,7 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 2. **Audio Recording** (`src/core/audio_recorder.py`): Captures audio using sounddevice when hotkey triggered
 3. **Transcription** (`src/core/transcriber.py`): Processes audio with faster-whisper/WhisperModel on CUDA
 4. **Text Input** (`src/core/input_handler.py`): Injects transcribed text into active window using pynput
-5. **UI Updates**: PyQt6 signals/slots coordinate updates to overlay and system tray
+5. **UI Updates**: PySide6 signals/slots coordinate updates to overlay and system tray
 
 ### Key Components
 
@@ -55,7 +55,7 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 - Manages two background daemon threads:
   - Keyboard listener for hotkey detection
   - Config monitor for hot-reload support
-- Thread-safe communication via PyQt6 signals (status_changed, text_ready)
+- Thread-safe communication via PySide6 signals (status_changed, text_ready)
 - Handles recording cancellation when new recording starts during transcription
 
 **Transcriber** (`src/core/transcriber.py`):
@@ -90,7 +90,7 @@ Changes are detected automatically by config monitor thread and applied without 
 
 ### Threading Model
 
-- **Main Thread**: PyQt6 event loop for UI
+- **Main Thread**: PySide6 event loop for UI
 - **Keyboard Listener Thread**: pynput keyboard listener (daemon)
 - **Config Monitor Thread**: Polls settings.yaml mtime every CONFIG_CHECK_INTERVAL_SEC (daemon)
 - **Transcription Workers**: Short-lived daemon threads spawned per transcription request
@@ -139,4 +139,4 @@ Set `model_cache_dir` in settings.yaml to avoid HuggingFace Hub trying to create
 - Enums defined in src/config/types.py (HotkeyMode, ModelSize, ComputeType, AppState)
 - Constants in src/config/constants.py (UI dimensions, intervals, default config)
 - Logger via src/utils/logger.py (get_logger(__name__))
-- PyQt6 signals for thread-safe UI updates (never manipulate UI from worker threads directly)
+- PySide6 signals for thread-safe UI updates (never manipulate UI from worker threads directly)
