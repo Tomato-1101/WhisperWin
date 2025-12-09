@@ -25,12 +25,12 @@ AUDIO_DTYPE: str = "float32"  # 音声データ型
 # ============================================
 # UI設定
 # ============================================
-OVERLAY_BASE_WIDTH: int = 100      # オーバーレイ基本幅
-OVERLAY_BASE_HEIGHT: int = 32      # オーバーレイ基本高さ
-OVERLAY_EXPANDED_WIDTH: int = 240  # オーバーレイ拡張時の幅
-OVERLAY_EXPANDED_HEIGHT: int = 48  # オーバーレイ拡張時の高さ
-OVERLAY_TOP_MARGIN: int = 16       # 画面上端からのマージン
-ANIMATION_DURATION_MS: int = 350   # アニメーション時間（ミリ秒）
+OVERLAY_BASE_WIDTH: int = 60        # オーバーレイ基本幅（コンパクト）
+OVERLAY_BASE_HEIGHT: int = 28       # オーバーレイ基本高さ
+OVERLAY_EXPANDED_WIDTH: int = 160   # オーバーレイ拡張時の幅
+OVERLAY_EXPANDED_HEIGHT: int = 36   # オーバーレイ拡張時の高さ
+OVERLAY_TOP_MARGIN: int = 16        # 画面上端からのマージン
+ANIMATION_DURATION_MS: int = 250    # アニメーション時間（高速化）
 
 # ============================================
 # タイミング設定

@@ -60,6 +60,9 @@ class SuperWhisperApp(QObject):
     def _setup_core_components(self) -> None:
         """コアビジネスロジックコンポーネントを初期化する。"""
         self._recorder = AudioRecorder()
+        
+        # 音声レベルコールバックを設定（波形アニメーション用）
+        self._recorder.set_level_callback(self._on_audio_level)
 
         # バックエンド設定に基づいてTranscriberを初期化
         backend_type = self._config.get("transcription_backend", "local")
@@ -69,6 +72,9 @@ class SuperWhisperApp(QObject):
 
         # LLM後処理の初期化
         self._setup_text_processor()
+        
+        # VADモデルをバックグラウンドでプリロード（初回入力時の遅延を防ぐ）
+        self._preload_vad_model()
 
     def _create_transcriber(self, backend_type: str):
         """
@@ -133,6 +139,30 @@ class SuperWhisperApp(QObject):
                 is_error=False
             )
 
+    def _preload_vad_model(self) -> None:
+        """
+        VADモデルをバックグラウンドでプリロードする。
+        
+        アプリ起動時に呼び出すことで、最初の音声入力時の
+        VADモデルロード遅延を回避する。
+        """
+        def _preload_worker():
+            try:
+                if isinstance(self._transcriber, GroqTranscriber):
+                    # Groqモードの場合
+                    self._transcriber.preload_vad()
+                elif hasattr(self._transcriber, 'vad_filter') and self._transcriber.vad_filter:
+                    # ローカルモードでVADが有効な場合
+                    # ローカルTranscriberのVADはfaster-whisper内部で処理されるため
+                    # 別途プリロードは不要
+                    pass
+                logger.debug("VADプリロード完了")
+            except Exception as e:
+                logger.warning(f"VADプリロードに失敗しました: {e}")
+        
+        # バックグラウンドスレッドでプリロード
+        threading.Thread(target=_preload_worker, daemon=True).start()
+
     def _setup_text_processor(self) -> None:
         """LLMテキスト後処理を初期化する。"""
         llm_config = self._config.get("llm_postprocess", {})
@@ -167,6 +197,18 @@ class SuperWhisperApp(QObject):
         self._overlay = DynamicIslandOverlay()
         self._settings_window = SettingsWindow()
         self._tray = SystemTray()
+
+    def _on_audio_level(self, level: float, has_voice: bool) -> None:
+        """
+        音声レベルコールバック。録音中の音声レベルを受け取る。
+        
+        Args:
+            level: 正規化された音声レベル（0.0-1.0）
+            has_voice: 音声が検出されている場合True
+        """
+        # オーバーレイの波形に音声検出状態を伝達
+        if self._is_recording and hasattr(self._overlay, 'set_voice_active'):
+            self._overlay.set_voice_active(has_voice)
 
     def _setup_signals(self) -> None:
         """シグナルをスロットに接続する。"""
@@ -235,12 +277,14 @@ class SuperWhisperApp(QObject):
         """
         if not text:
             logger.info("テキストが検出されませんでした。")
-            self._overlay.show_temporary_message("No Speech")
+            # idle状態に移行してオーバーレイを消す
+            self.status_changed.emit("idle")
             return
 
         if text.startswith("Error:"):
             logger.error(f"文字起こし失敗: {text}")
-            self._overlay.show_temporary_message("Error", is_error=True)
+            # idle状態に移行してオーバーレイを消す
+            self.status_changed.emit("idle")
             return
 
         llm_time = 0
@@ -270,8 +314,8 @@ class SuperWhisperApp(QObject):
         if dev_mode:
             self._log_timing_to_file(llm_time, llm_api_time, insert_time)
 
-        # 少し待ってからアイドル状態に戻る
-        QTimer.singleShot(1000, lambda: self.status_changed.emit("idle"))
+        # 即座にアイドル状態に戻る（オーバーレイを消す）
+        self.status_changed.emit("idle")
 
     def _log_timing_to_file(self, llm_time: float, llm_api_time: float, insert_time: float) -> None:
         """
@@ -342,7 +386,7 @@ class SuperWhisperApp(QObject):
         self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
-        """録音を停止して文字起こしを開始する。"""
+        """録音を停止して文字起こしを開始する。処理中はオーバーレイを表示。"""
         if not self._is_recording:
             return
         
@@ -351,6 +395,8 @@ class SuperWhisperApp(QObject):
         self._is_recording = False
         self._is_transcribing = True
         self._cancel_transcription = False
+        
+        # 処理中状態を表示（キーを離してもオーバーレイは表示続行）
         self.status_changed.emit("transcribing")
         
         audio_data = self._recorder.stop()
@@ -414,18 +460,7 @@ class SuperWhisperApp(QObject):
     # ホットキー処理
     # -------------------------------------------------------------------------
 
-    def _parse_hotkey(self, hotkey_str: str) -> Set[str]:
-        """
-        ホットキー文字列をキー名のセットにパースする。
-        
-        Args:
-            hotkey_str: ホットキー文字列（例："<ctrl>+<space>"）
-            
-        Returns:
-            キー名のセット
-        """
-        keys = hotkey_str.replace('<', '').replace('>', '').split('+')
-        return set(keys)
+
 
     def _start_keyboard_listener(self) -> None:
         """ホットキーモードに基づいてキーボードリスナーを開始する。"""
@@ -458,7 +493,8 @@ class SuperWhisperApp(QObject):
             key_str = self._normalize_key(key)
             if key_str:
                 self._pressed_keys.add(key_str)
-                if self._required_keys.issubset(self._pressed_keys) and not self._is_recording:
+                # 新しいマッチングロジック：汎用/左右指定の両方に対応
+                if self._check_hotkey_match() and not self._is_recording:
                     self.start_recording()
         except Exception:
             pass
@@ -474,14 +510,48 @@ class SuperWhisperApp(QObject):
             key_str = self._normalize_key(key)
             if key_str and key_str in self._pressed_keys:
                 self._pressed_keys.remove(key_str)
-                if self._is_recording and key_str in self._required_keys:
+                # ホットキーに含まれるキーが離されたら録音停止
+                if self._is_recording and self._is_hotkey_key_released(key_str):
                     self.stop_and_transcribe()
         except Exception:
             pass
 
+    def _is_hotkey_key_released(self, key_str: str) -> bool:
+        """
+        解放されたキーがホットキーの一部かチェックする。
+        
+        汎用修飾キー（ctrl, alt, shift）の場合は対応する左右キーも確認。
+        
+        Args:
+            key_str: 解放されたキー文字列
+            
+        Returns:
+            ホットキーの一部の場合True
+        """
+        # 直接マッチ
+        if key_str in self._required_keys:
+            return True
+        
+        # 汎用修飾キーへのマッピングをチェック
+        specific_to_generic = {
+            'ctrl_l': 'ctrl', 'ctrl_r': 'ctrl',
+            'alt_l': 'alt', 'alt_r': 'alt',
+            'shift_l': 'shift', 'shift_r': 'shift',
+            'cmd_l': 'cmd', 'cmd_r': 'cmd',
+        }
+        
+        generic_key = specific_to_generic.get(key_str)
+        if generic_key and generic_key in self._required_keys:
+            return True
+        
+        return False
+
     def _normalize_key(self, key: Any) -> Optional[str]:
         """
         キーを標準的な文字列表現に正規化する。
+        
+        左右の修飾キー（ctrl_l/r, alt_l/r, shift_l/r, cmd_l/r）を
+        個別に認識しつつ、汎用設定（ctrl, alt, shift）にも対応。
         
         Args:
             key: 正規化するキー
@@ -492,18 +562,68 @@ class SuperWhisperApp(QObject):
         try:
             if hasattr(key, 'name'):
                 name = key.name.lower()
-                if name in ('ctrl_l', 'ctrl_r'):
-                    return 'ctrl'
-                if name in ('alt_l', 'alt_r'):
-                    return 'alt'
-                if name in ('shift_l', 'shift_r'):
-                    return 'shift'
+                # 左右の修飾キーはそのまま保持（pynputの名前形式）
+                # これにより <ctrl_l> のような設定が動作する
                 return name
             elif hasattr(key, 'char') and key.char:
                 return key.char.lower()
         except Exception:
             pass
         return None
+
+    def _parse_hotkey(self, hotkey_str: str) -> Set[str]:
+        """
+        ホットキー文字列をキー名のセットにパースする。
+        
+        汎用設定 (ctrl, alt, shift) と左右指定 (ctrl_l, alt_r) の
+        両方に対応。汎用設定の場合は左右両方を展開する。
+        
+        Args:
+            hotkey_str: ホットキー文字列（例："<ctrl>+<space>" or "<alt_r>"）
+            
+        Returns:
+            キー名のセット
+        """
+        keys = hotkey_str.replace('<', '').replace('>', '').split('+')
+        result = set()
+        
+        for k in keys:
+            k = k.strip()
+            if k:
+                result.add(k)
+        
+        return result
+
+    def _check_hotkey_match(self) -> bool:
+        """
+        現在押されているキーがホットキー設定と一致するかチェックする。
+        
+        汎用修飾キー（ctrl, alt, shift）の場合は左右どちらでも一致、
+        左右指定（ctrl_l, alt_r等）の場合は完全一致を要求。
+        
+        Returns:
+            ホットキーが一致した場合True
+        """
+        # 汎用修飾キーから具体的な左右キー名へのマッピング
+        generic_to_specific = {
+            'ctrl': ('ctrl_l', 'ctrl_r'),
+            'alt': ('alt_l', 'alt_r'),
+            'shift': ('shift_l', 'shift_r'),
+            'cmd': ('cmd_l', 'cmd_r'),
+        }
+        
+        for required_key in self._required_keys:
+            if required_key in generic_to_specific:
+                # 汎用キー: 左右どちらかが押されていればOK
+                left, right = generic_to_specific[required_key]
+                if left not in self._pressed_keys and right not in self._pressed_keys:
+                    return False
+            else:
+                # 具体的なキー（ctrl_l等）または通常キー: 完全一致
+                if required_key not in self._pressed_keys:
+                    return False
+        
+        return True
 
     # -------------------------------------------------------------------------
     # 設定監視

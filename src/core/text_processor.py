@@ -174,15 +174,33 @@ class TextProcessor:
         client = self._get_groq_client()
 
         api_start = time.perf_counter()
+        logger.debug(f"LLM API呼び出し開始: model={self.model}, text_len={len(text)}")
         response = client.chat.completions.create(
             model=self.model,
             messages=self._build_messages(text),
             temperature=0.0,  # 決定論的な出力
-            max_tokens=len(text) * 3,  # 入力の3倍まで
+            max_tokens=max(len(text) * 3, 100),  # 入力の3倍または最低100トークン
         )
         self.last_api_time = (time.perf_counter() - api_start) * 1000
+        logger.debug(f"LLM API呼び出し完了: {self.last_api_time:.0f}ms")
 
-        result = response.choices[0].message.content.strip()
+        # レスポンスの検証
+        if not response.choices:
+            logger.error(f"LLM API: 空のchoicesが返されました (model={self.model})")
+            raise RuntimeError("LLM API returned empty choices")
+        
+        content = response.choices[0].message.content
+        if content is None:
+            logger.warning(f"LLM API: contentがNone (model={self.model}), 元テキストを使用")
+            return text if self.fallback_on_error else ""
+        
+        result = content.strip()
+        
+        # 空のレスポンスの場合、元テキストにフォールバック
+        if not result:
+            logger.warning(f"LLM API: 空のレスポンス (model={self.model}), 元テキストを使用")
+            return text if self.fallback_on_error else ""
+        
         logger.debug(f"LLM変換: '{text}' -> '{result}'")
         return result
 

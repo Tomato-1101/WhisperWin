@@ -147,64 +147,176 @@ class HotkeyInput(QLineEdit):
     
     クリックしてキーを押すと、そのキーコンビネーションを
     pynput形式の文字列として記録する。
+    
+    左右のAlt/Ctrl/Shift/Winキーを区別し、
+    修飾キー単独もショートカットとして登録可能。
     """
+    
+    # Windows仮想キーコードで左右の修飾キーを区別
+    # https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+    VIRTUAL_KEY_MAPPING = {
+        # 左側の修飾キー
+        0xA2: "<ctrl_l>",   # VK_LCONTROL (162)
+        0xA0: "<shift_l>",  # VK_LSHIFT (160)
+        0xA4: "<alt_l>",    # VK_LMENU (164)
+        0x5B: "<cmd_l>",    # VK_LWIN (91)
+        # 右側の修飾キー
+        0xA3: "<ctrl_r>",   # VK_RCONTROL (163)
+        0xA1: "<shift_r>",  # VK_RSHIFT (161)
+        0xA5: "<alt_r>",    # VK_RMENU (165)
+        0x5C: "<cmd_r>",    # VK_RWIN (92)
+    }
+    
+    # スキャンコードによるフォールバックマッピング
+    # Qtが汎用VK_MENU(18)等を返す場合に使用
+    SCAN_CODE_MAPPING = {
+        # 左側の修飾キー
+        29: "<ctrl_l>",     # Left Ctrl
+        42: "<shift_l>",    # Left Shift
+        56: "<alt_l>",      # Left Alt
+        # 右側の修飾キー（拡張スキャンコード）
+        # Qtは拡張フラグを含んだ値を返すことがある
+        285: "<ctrl_r>",    # Right Ctrl (29 + 256)
+        54: "<shift_r>",    # Right Shift
+        312: "<alt_r>",     # Right Alt (56 + 256)
+        # 特殊なスキャンコード（システム依存）
+        57400: "<alt_r>",   # Right Alt (一部のキーボード/ドライバ)
+        57372: "<ctrl_r>",  # Right Ctrl (一部のキーボード/ドライバ)
+        57373: "<ctrl_r>",  # Right Ctrl (別のスキャンコード)
+    }
+    
+    # Qt Keyから基本的な修飾キー種別への変換
+    MODIFIER_KEY_MAP = {
+        Qt.Key.Key_Control: "ctrl",
+        Qt.Key.Key_Shift: "shift",
+        Qt.Key.Key_Alt: "alt",
+        Qt.Key.Key_Meta: "cmd",
+    }
     
     def __init__(self, parent=None):
         """ホットキー入力ウィジェットを初期化する。"""
         super().__init__(parent)
         self.setReadOnly(True)
         self.setPlaceholderText("Click to record shortcut...")
+        self._pressed_keys = []  # 押下中のキーを順番に追跡
+        self._is_recording = False
+
+    def focusInEvent(self, event):
+        """フォーカス取得時に録音状態をリセット。"""
+        super().focusInEvent(event)
+        self._pressed_keys = []
+        self._is_recording = True
+
+    def focusOutEvent(self, event):
+        """フォーカス喪失時に録音状態を終了。"""
+        super().focusOutEvent(event)
+        self._is_recording = False
+
+    def _get_modifier_key_name(self, virtual_key: int, scan_code: int = 0) -> str:
+        """
+        仮想キーコードまたはスキャンコードから修飾キー名を取得する。
+        
+        Args:
+            virtual_key: Windows仮想キーコード
+            scan_code: ネイティブスキャンコード（フォールバック用）
+            
+        Returns:
+            pynput形式のキー名、またはマッチしない場合空文字
+        """
+        # まず仮想キーコードで判別
+        if virtual_key in self.VIRTUAL_KEY_MAPPING:
+            return self.VIRTUAL_KEY_MAPPING[virtual_key]
+        
+        # フォールバック: スキャンコードで判別
+        if scan_code in self.SCAN_CODE_MAPPING:
+            return self.SCAN_CODE_MAPPING[scan_code]
+        
+        return ""
 
     def keyPressEvent(self, event: QKeyEvent):
         """
         キー押下イベントを処理してホットキーを記録する。
         
+        複数キーの組み合わせを追跡し、左右の修飾キーを区別する。
+        新しい入力開始時は古い設定をクリアする。
+        
         Args:
             event: キーイベント
         """
         key = event.key()
+        virtual_key = event.nativeVirtualKey()
+        scan_code = event.nativeScanCode()
         modifiers = event.modifiers()
-
-        # 単独の修飾キーは無視
-        if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
-            return
-
-        parts = []
-
-        # 修飾キー
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
-            parts.append("<ctrl>")
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            parts.append("<shift>")
-        if modifiers & Qt.KeyboardModifier.AltModifier:
-            parts.append("<alt>")
-        if modifiers & Qt.KeyboardModifier.MetaModifier:
-            parts.append("<cmd>")
-
-        # メインキー
-        key_text = self._get_key_text(key)
-        if key_text:
-            parts.append(key_text)
+        
+        # 新しい入力開始時は古いキーをクリア
+        if not self._is_recording:
+            self._pressed_keys = []
+            self._is_recording = True
+        
+        # 修飾キーの場合
+        if key in self.MODIFIER_KEY_MAP:
+            # 仮想キーコードまたはスキャンコードで左右を判別
+            key_name = self._get_modifier_key_name(virtual_key, scan_code)
+            if not key_name:
+                # 仮想キーコードが不明な場合は汎用名を使用
+                base_name = self.MODIFIER_KEY_MAP[key]
+                key_name = f"<{base_name}>"
             
-        self.setText("+".join(parts))
+            # まだ追加されていなければ追加
+            if key_name not in self._pressed_keys:
+                self._pressed_keys.append(key_name)
+                self._update_display()
+            
+            event.accept()
+            return
+        
+        # 通常キーの場合
+        key_text = self._get_key_text(key, scan_code)
+        if key_text and key_text not in self._pressed_keys:
+            self._pressed_keys.append(key_text)
+            self._update_display()
+        
         event.accept()
 
-    def _get_key_text(self, key: int) -> str:
+    def keyReleaseEvent(self, event: QKeyEvent):
+        """
+        キーリリースイベントを処理する。
+        
+        最初のキーが離された時点で組み合わせを確定する。
+        """
+        # キーが離されたら現在の組み合わせを確定（それ以上追加しない）
+        self._is_recording = False
+        event.accept()
+
+    def _update_display(self):
+        """現在押されているキーの組み合わせを表示する。"""
+        if self._pressed_keys:
+            self.setText("+".join(self._pressed_keys))
+
+    def _get_key_text(self, key: int, scan_code: int = 0) -> str:
         """
         Qtキーコードをpynput形式の文字列に変換する。
         
         Args:
             key: Qtキーコード
+            scan_code: ネイティブスキャンコード（左右判別用）
             
         Returns:
             pynput形式のキー文字列
         """
-        # 特殊キーのマッピング
+        # 特殊キーのマッピング（ファンクションキー、ナビゲーション、Numpadなど）
         mapping = {
+            # ファンクションキー F1-F24
             Qt.Key.Key_F1: "<f1>", Qt.Key.Key_F2: "<f2>", Qt.Key.Key_F3: "<f3>",
             Qt.Key.Key_F4: "<f4>", Qt.Key.Key_F5: "<f5>", Qt.Key.Key_F6: "<f6>",
             Qt.Key.Key_F7: "<f7>", Qt.Key.Key_F8: "<f8>", Qt.Key.Key_F9: "<f9>",
             Qt.Key.Key_F10: "<f10>", Qt.Key.Key_F11: "<f11>", Qt.Key.Key_F12: "<f12>",
+            Qt.Key.Key_F13: "<f13>", Qt.Key.Key_F14: "<f14>", Qt.Key.Key_F15: "<f15>",
+            Qt.Key.Key_F16: "<f16>", Qt.Key.Key_F17: "<f17>", Qt.Key.Key_F18: "<f18>",
+            Qt.Key.Key_F19: "<f19>", Qt.Key.Key_F20: "<f20>", Qt.Key.Key_F21: "<f21>",
+            Qt.Key.Key_F22: "<f22>", Qt.Key.Key_F23: "<f23>", Qt.Key.Key_F24: "<f24>",
+            
+            # 特殊キー
             Qt.Key.Key_Space: "<space>",
             Qt.Key.Key_Tab: "<tab>",
             Qt.Key.Key_Return: "<enter>",
@@ -212,6 +324,14 @@ class HotkeyInput(QLineEdit):
             Qt.Key.Key_Backspace: "<backspace>",
             Qt.Key.Key_Delete: "<delete>",
             Qt.Key.Key_Escape: "<esc>",
+            Qt.Key.Key_CapsLock: "<caps_lock>",
+            Qt.Key.Key_NumLock: "<num_lock>",
+            Qt.Key.Key_ScrollLock: "<scroll_lock>",
+            Qt.Key.Key_Pause: "<pause>",
+            Qt.Key.Key_Print: "<print_screen>",
+            Qt.Key.Key_SysReq: "<print_screen>",
+            
+            # ナビゲーションキー
             Qt.Key.Key_Home: "<home>",
             Qt.Key.Key_End: "<end>",
             Qt.Key.Key_PageUp: "<page_up>",
@@ -221,11 +341,27 @@ class HotkeyInput(QLineEdit):
             Qt.Key.Key_Left: "<left>",
             Qt.Key.Key_Right: "<right>",
             Qt.Key.Key_Insert: "<insert>",
+            
+            # テンキー
+            Qt.Key.Key_division: "<num_divide>",
+            Qt.Key.Key_multiply: "<num_multiply>",
+            Qt.Key.Key_Minus: "<num_subtract>",
+            Qt.Key.Key_Plus: "<num_add>",
+            
+            # メディアキー
+            Qt.Key.Key_MediaPlay: "<media_play_pause>",
+            Qt.Key.Key_MediaStop: "<media_stop>",
+            Qt.Key.Key_MediaPrevious: "<media_previous>",
+            Qt.Key.Key_MediaNext: "<media_next>",
+            Qt.Key.Key_VolumeUp: "<media_volume_up>",
+            Qt.Key.Key_VolumeDown: "<media_volume_down>",
+            Qt.Key.Key_VolumeMute: "<media_volume_mute>",
         }
         
         if key in mapping:
             return mapping[key]
         
+        # キーボードの記号キー
         text = QKeySequence(key).toString().lower()
         if not text:
             return ""
@@ -632,16 +768,29 @@ class SettingsWindow(QWidget):
 
         if provider == "groq":
             models = [
+                # Production Models
                 "llama-3.3-70b-versatile",
                 "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768"
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "qwen/qwen3-32b",
+                
+                # Specialized / Other Models
+                "moonshotai/kimi-k2-instruct-0905",
+                "allam-2-7b",
+                "groq/compound",
+                "groq/compound-mini",
+                
+                # Preview Models
+                "meta-llama/llama-4-maverick-17b-128e-instruct",
+                "meta-llama/llama-4-scout-17b-16e-instruct",
             ]
             default_model = "llama-3.3-70b-versatile"
         elif provider == "cerebras":
             # Cerebrasドキュメントのモデル一覧
             models = [
-                "llama3.1-8b",
                 "llama-3.3-70b",
+                "llama3.1-8b",
                 "qwen-3-32b",
                 "qwen-3-235b-a22b-instruct-2507",
                 "gpt-oss-120b",

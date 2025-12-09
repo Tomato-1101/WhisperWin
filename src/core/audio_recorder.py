@@ -24,6 +24,7 @@ class AudioRecorder:
     
     sounddeviceを使用して非同期で音声を録音し、
     NumPy配列として取得できる。
+    リアルタイムの音声レベル通知機能を提供。
     
     Attributes:
         sample_rate: サンプリングレート（Hz）
@@ -41,6 +42,18 @@ class AudioRecorder:
         self._queue: queue.Queue = queue.Queue()  # 録音データを一時保存するキュー
         self._recording = False  # 録音状態フラグ
         self._stream: Optional[sd.InputStream] = None  # 音声入力ストリーム
+        self._level_callback: Optional[callable] = None  # 音声レベルコールバック
+        self._level_threshold = 0.02  # 音声検出のしきい値
+
+    def set_level_callback(self, callback: callable) -> None:
+        """
+        音声レベルコールバックを設定する。
+        
+        Args:
+            callback: 音声レベル（0.0-1.0）と音声検出フラグを受け取るコールバック
+                     callback(level: float, has_voice: bool)
+        """
+        self._level_callback = callback
 
     @property
     def is_recording(self) -> bool:
@@ -58,6 +71,7 @@ class AudioRecorder:
         sounddeviceからのコールバック関数。
         
         音声データを受け取るたびに呼び出され、キューに追加する。
+        音声レベルを計算してコールバックに通知する。
         
         Args:
             indata: 受信した音声データ
@@ -67,8 +81,19 @@ class AudioRecorder:
         """
         if status:
             logger.warning(f"音声コールバック ステータス: {status}")
+        
         # データをコピーしてキューに追加（元データは再利用されるため）
         self._queue.put(indata.copy())
+        
+        # 音声レベルを計算してコールバックに通知
+        if self._level_callback:
+            # RMSで音声レベルを計算
+            level = float(np.sqrt(np.mean(indata ** 2)))
+            # 正規化（0.0-1.0）- 最大値を0.3程度と仮定
+            normalized_level = min(1.0, level / 0.3)
+            # しきい値を超えたら音声ありと判定
+            has_voice = level > self._level_threshold
+            self._level_callback(normalized_level, has_voice)
 
     def start(self) -> bool:
         """

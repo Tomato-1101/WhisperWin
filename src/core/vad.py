@@ -108,3 +108,15 @@ class VadFilter:
             logger.error(f"VADエラー: {e}")
             # エラー時は安全側に倒してTrueを返す（文字起こしを実行）
             return True
+
+    def preload_model(self) -> None:
+        """
+        VADモデルを事前にロードする。
+        
+        アプリ起動時に呼び出すことで、最初の音声入力時の
+        モデルロード遅延を回避できる。
+        """
+        logger.info("VADモデルをプリロード中...")
+        self._load_model()
+        logger.info("VADモデルのプリロードが完了しました")
+

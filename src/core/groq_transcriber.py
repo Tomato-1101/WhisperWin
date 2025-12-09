@@ -216,3 +216,14 @@ class GroqTranscriber:
         """
         self._client = None
         logger.debug("Groqクライアント参照をクリアしました")
+
+    def preload_vad(self) -> None:
+        """
+        VADモデルを事前にロードする。
+        
+        アプリ起動時に呼び出すことで、最初の音声入力時の
+        VADモデルロード遅延を回避できる。
+        """
+        if self.vad_enabled and self._vad_filter:
+            self._vad_filter.preload_model()
+
