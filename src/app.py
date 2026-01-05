@@ -172,7 +172,6 @@ class SuperWhisperApp(QObject):
             self._text_processor = TextProcessor(
                 provider=llm_config.get("provider", "groq"),
                 model=llm_config.get("model", "llama-3.3-70b-versatile"),
-                system_prompt=llm_config.get("system_prompt", ""),
                 timeout=llm_config.get("timeout", 5.0),
                 fallback_on_error=llm_config.get("fallback_on_error", True),
             )
@@ -562,6 +561,9 @@ class SuperWhisperApp(QObject):
         try:
             if hasattr(key, 'name'):
                 name = key.name.lower()
+                # alt_gr（AltGr/右Alt）をalt_rとして認識
+                if name == 'alt_gr':
+                    return 'alt_r'
                 # 左右の修飾キーはそのまま保持（pynputの名前形式）
                 # これにより <ctrl_l> のような設定が動作する
                 return name

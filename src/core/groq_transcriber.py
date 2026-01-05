@@ -182,12 +182,16 @@ class GroqTranscriber:
 
             # テキスト抽出（レスポンス形式に応じて処理）
             if isinstance(transcription, str):
-                text = transcription.strip()
+                text = transcription
             elif hasattr(transcription, 'text'):
-                text = transcription.text.strip()
+                text = transcription.text
             else:
                 # 予期しない型への対応
-                text = str(transcription).strip()
+                text = str(transcription)
+            
+            # 前後のスペース・改行を確実に除去
+            text = text.strip()
+            
             logger.debug(f"Groq文字起こし: {text[:100]}...")
             return text
 

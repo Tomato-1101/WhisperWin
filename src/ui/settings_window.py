@@ -647,28 +647,6 @@ class SettingsWindow(QWidget):
         api_keys_group.setLayout(api_keys_layout)
         layout.addWidget(api_keys_group)
 
-        # ===== システムプロンプトグループ =====
-        prompt_group = QGroupBox("System Prompt")
-        prompt_layout = QVBoxLayout()
-
-        prompt_label = QLabel("Define how the LLM should transform transcription results:")
-        prompt_label.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 5px;")
-        prompt_layout.addWidget(prompt_label)
-
-        self._llm_prompt_edit = QTextEdit()
-        self._llm_prompt_edit.setPlaceholderText(
-            "Example:\n"
-            "音声認識結果を以下のルールで変換してください:\n"
-            "1. 数式: 「いち たす にー」→「1 + 2」\n"
-            "2. カタカナ英語: 「アップル」→「Apple」\n"
-            "変換後のテキストのみ返してください。"
-        )
-        self._llm_prompt_edit.setMinimumHeight(150)
-        prompt_layout.addWidget(self._llm_prompt_edit)
-
-        prompt_group.setLayout(prompt_layout)
-        layout.addWidget(prompt_group)
-
         layout.addStretch()
         return page
 
@@ -704,7 +682,6 @@ class SettingsWindow(QWidget):
         self._llm_provider_combo.setCurrentText(llm_config.get("provider", "groq"))
         self._llm_timeout_spin.setValue(llm_config.get("timeout", 5.0))
         self._llm_fallback_check.setChecked(llm_config.get("fallback_on_error", True))
-        self._llm_prompt_edit.setPlainText(llm_config.get("system_prompt", ""))
 
         # モデルリストを更新して現在のモデルを選択
         self._on_llm_provider_changed(self._llm_provider_combo.currentText())
@@ -744,7 +721,6 @@ class SettingsWindow(QWidget):
         self._llm_model_combo.setEnabled(enabled)
         self._llm_timeout_spin.setEnabled(enabled)
         self._llm_fallback_check.setEnabled(enabled)
-        self._llm_prompt_edit.setEnabled(enabled)
 
     def _on_llm_provider_changed(self, provider: str) -> None:
         """
@@ -842,7 +818,10 @@ class SettingsWindow(QWidget):
         self.setStyleSheet(stylesheet)
 
     def _save_settings(self) -> None:
-        """設定をファイルに保存する。"""
+        """設定をファイルに保存する。既存の設定（dev_mode等）を保持。"""
+        # 既存のdev_mode設定を保持
+        existing_dev_mode = self._config_manager.get("dev_mode", False)
+        
         new_config = {
             "hotkey": self._hotkey_input.text(),
             "hotkey_mode": self._mode_combo.currentText(),
@@ -853,16 +832,18 @@ class SettingsWindow(QWidget):
             "groq_model": self._groq_model_combo.currentText(),
             "vad_filter": self._vad_check.isChecked(),
             "release_memory_delay": self._memory_spin.value(),
-            "dark_mode": self._is_dark_mode,  # テーマ設定を保存
+            "dark_mode": self._is_dark_mode,
+            
+            # 既存の設定を保持
+            "dev_mode": existing_dev_mode,
 
-            # LLM後処理設定
+            # LLM後処理設定（system_promptはprompt.xmlから読み込むので不要）
             "llm_postprocess": {
                 "enabled": self._llm_enabled_check.isChecked(),
                 "provider": self._llm_provider_combo.currentText(),
                 "model": self._llm_model_combo.currentText(),
                 "timeout": self._llm_timeout_spin.value(),
                 "fallback_on_error": self._llm_fallback_check.isChecked(),
-                "system_prompt": self._llm_prompt_edit.toPlainText(),
             },
         }
 

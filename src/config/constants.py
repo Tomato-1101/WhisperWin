@@ -72,17 +72,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # 開発者モード - 出力を引用符で囲み、タイミングをファイルに記録
     "dev_mode": False,
 
-    # LLM後処理設定
+    # LLM後処理設定（system_promptはprompt.xmlから読み込む）
     "llm_postprocess": {
         "enabled": False,
         "provider": "groq",
         "model": "llama-3.3-70b-versatile",
         "timeout": 5.0,
         "fallback_on_error": True,
-        "system_prompt": (
-            "音声認識結果を適切に変換してください。"
-            "変換後のテキストのみ返してください。"
-        ),
     },
 }
 

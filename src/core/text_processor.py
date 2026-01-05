@@ -7,6 +7,7 @@ Groq/Cerebrasの高速推論APIを使用して、
 """
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from ..utils.logger import get_logger
@@ -31,6 +32,9 @@ try:
 except ImportError:
     Cerebras = None
 
+# プロンプトファイルのパス（プロジェクトルート）
+PROMPT_FILE_PATH = Path(__file__).parent.parent.parent / "prompt.xml"
+
 
 class TextProcessor:
     """
@@ -38,11 +42,12 @@ class TextProcessor:
     
     Groq/CerebrasのAPIを使用して、文字起こし結果を整形する。
     フィラー除去、数式変換、言い直し修正などを自動で行う。
+    プロンプトはprompt.xmlファイルから読み込み、変更時は自動リロード。
     
     Attributes:
         provider: 使用するLLMプロバイダー（'groq' or 'cerebras'）
         model: 使用するモデル名
-        system_prompt: システムプロンプト
+        system_prompt: システムプロンプト（prompt.xmlから読み込み）
         timeout: APIタイムアウト（秒）
         fallback_on_error: エラー時に元テキストを返すかどうか
         last_api_time: 最後のAPI呼び出し時間（ミリ秒）
@@ -52,7 +57,6 @@ class TextProcessor:
         self,
         provider: str = "groq",
         model: str = "llama-3.3-70b-versatile",
-        system_prompt: str = "",
         timeout: float = 5.0,
         fallback_on_error: bool = True,
     ) -> None:
@@ -62,19 +66,63 @@ class TextProcessor:
         Args:
             provider: LLMプロバイダー（'groq' or 'cerebras'）
             model: モデル名
-            system_prompt: システムプロンプト（整形ルール）
             timeout: APIタイムアウト（秒）
             fallback_on_error: エラー時に元テキストを返す場合True
         """
         self.provider = provider
         self.model = model
-        self.system_prompt = system_prompt
         self.timeout = timeout
         self.fallback_on_error = fallback_on_error
+        
+        # プロンプトファイルの更新時刻を追跡（ホットリロード用）
+        self._prompt_mtime: Optional[float] = None
+        
+        # prompt.xmlからプロンプトを読み込む
+        self.system_prompt = self._load_prompt_from_file()
 
         # 各プロバイダーのクライアント（遅延初期化）
         self._groq_client: Optional[Groq] = None
         self._cerebras_client: Optional[Cerebras] = None
+
+    def _load_prompt_from_file(self) -> str:
+        """
+        prompt.xmlファイルからプロンプトを読み込む。
+        
+        Returns:
+            プロンプト文字列。ファイルが存在しない場合はデフォルトプロンプト。
+        """
+        try:
+            if PROMPT_FILE_PATH.exists():
+                # ファイル更新時刻を記録
+                self._prompt_mtime = PROMPT_FILE_PATH.stat().st_mtime
+                content = PROMPT_FILE_PATH.read_text(encoding="utf-8")
+                logger.debug(f"プロンプトを読み込みました: {PROMPT_FILE_PATH}")
+                return content
+            else:
+                logger.warning(f"prompt.xmlが見つかりません: {PROMPT_FILE_PATH}")
+                return self._get_default_prompt()
+        except Exception as e:
+            logger.error(f"prompt.xml読み込みエラー: {e}")
+            return self._get_default_prompt()
+
+    def _reload_prompt_if_changed(self) -> None:
+        """プロンプトファイルが変更されていれば再読み込みする。"""
+        try:
+            if PROMPT_FILE_PATH.exists():
+                current_mtime = PROMPT_FILE_PATH.stat().st_mtime
+                if self._prompt_mtime is None or current_mtime > self._prompt_mtime:
+                    logger.info("prompt.xmlが変更されました。再読み込み中...")
+                    self.system_prompt = self._load_prompt_from_file()
+        except Exception as e:
+            logger.error(f"プロンプト更新確認エラー: {e}")
+
+    def _get_default_prompt(self) -> str:
+        """デフォルトのプロンプトを返す。"""
+        return (
+            "音声認識結果を適切に変換してください。"
+            "入力は<transcription>タグで囲まれています。"
+            "変換後のテキストのみ返してください。"
+        )
 
     def is_available(self) -> bool:
         """
@@ -118,6 +166,9 @@ class TextProcessor:
         Returns:
             変換後テキスト。エラー時はfallback_on_errorに応じて元テキストまたは空文字
         """
+        # プロンプトファイルが変更されていれば再読み込み
+        self._reload_prompt_if_changed()
+        
         # タイミング情報をリセット
         self.last_api_time = 0
         
