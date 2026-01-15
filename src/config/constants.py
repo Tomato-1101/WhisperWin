@@ -43,36 +43,47 @@ DEFAULT_MEMORY_RELEASE_DELAY_SEC: int = 300  # VRAM解放までの待機時間�
 # ============================================
 # settings.yamlが存在しない場合や、キーが欠けている場合に使用される
 DEFAULT_CONFIG: Dict[str, Any] = {
-    # ホットキー設定
-    "hotkey": "<f2>",
-    "hotkey_mode": HotkeyMode.TOGGLE.value,
-
-    # 文字起こしバックエンド
-    "transcription_backend": "local",  # "local" または "groq"
-
-    # モデル設定（ローカルバックエンド用）
-    "model_size": ModelSize.BASE.value,
-    "compute_type": ComputeType.FLOAT16.value,
+    # グローバル設定（両ホットキー共通）
     "language": "ja",
-    "model_cache_dir": "",
-
-    # Groq API設定
-    "groq_model": "whisper-large-v3-turbo",  # APIキーは環境変数GROQ_API_KEYから取得
-    "groq_prompt": "",  # Groq API用プロンプト
-
-    # OpenAI API設定
-    "openai_model": "gpt-4o-mini-transcribe",  # APIキーは環境変数OPENAI_API_KEYから取得
-    "openai_prompt": "",  # OpenAI API用プロンプト
-
-    # 文字起こし設定
-    "release_memory_delay": DEFAULT_MEMORY_RELEASE_DELAY_SEC,
     "vad_filter": True,
     "vad_min_silence_duration_ms": 500,
-    "condition_on_previous_text": False,
-    "no_speech_threshold": 0.6,
-    "log_prob_threshold": -1.0,
-    "no_speech_prob_cutoff": 0.7,
-    "beam_size": 5,
+
+    # ローカルバックエンド設定（共通）
+    "local_backend": {
+        "model_size": ModelSize.BASE.value,
+        "compute_type": ComputeType.FLOAT16.value,
+        "release_memory_delay": DEFAULT_MEMORY_RELEASE_DELAY_SEC,
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+        "log_prob_threshold": -1.0,
+        "no_speech_prob_cutoff": 0.7,
+        "beam_size": 5,
+        "model_cache_dir": "",
+    },
+
+    # ホットキー1 設定
+    "hotkey1": {
+        "hotkey": "<f2>",
+        "hotkey_mode": HotkeyMode.TOGGLE.value,
+        "backend": "local",
+        "api_model": "",
+        "api_prompt": "",
+    },
+
+    # ホットキー2 設定
+    "hotkey2": {
+        "hotkey": "<f3>",
+        "hotkey_mode": HotkeyMode.TOGGLE.value,
+        "backend": "local",
+        "api_model": "",
+        "api_prompt": "",
+    },
+
+    # APIモデルデフォルト値（バックエンド別）
+    "default_api_models": {
+        "groq": "whisper-large-v3-turbo",
+        "openai": "gpt-4o-mini-transcribe",
+    },
 
     # 開発者モード - 出力を引用符で囲み、タイミングをファイルに記録
     "dev_mode": False,

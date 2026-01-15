@@ -7,7 +7,8 @@
 
 import threading
 import time
-from typing import Any, Optional, Set
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Set, Union
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication
@@ -20,6 +21,33 @@ from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class HotkeySlot:
+    """
+    ホットキースロットの状態管理クラス。
+
+    各スロットのホットキー設定と、API使用時のTranscriberインスタンスを保持する。
+
+    Attributes:
+        slot_id: スロットID（1または2）
+        hotkey: ホットキー文字列
+        hotkey_mode: 動作モード（hold/toggle）
+        required_keys: パース済みのキーセット
+        backend: 使用するバックエンド
+        api_model: APIモデル名
+        api_prompt: APIプロンプト
+        api_transcriber: API Transcriberインスタンス（APIバックエンドの場合のみ）
+    """
+    slot_id: int
+    hotkey: str
+    hotkey_mode: str
+    required_keys: Set[str]
+    backend: str
+    api_model: str
+    api_prompt: str
+    api_transcriber: Optional[Union[GroqTranscriber, OpenAITranscriber]] = None
 
 
 class SuperWhisperApp(QObject):
@@ -60,88 +88,109 @@ class SuperWhisperApp(QObject):
     def _setup_core_components(self) -> None:
         """コアビジネスロジックコンポーネントを初期化する。"""
         self._recorder = AudioRecorder()
-        
+
         # 音声レベルコールバックを設定（波形アニメーション用）
         self._recorder.set_level_callback(self._on_audio_level)
 
-        # バックエンド設定に基づいてTranscriberを初期化
-        backend_type = self._config.get("transcription_backend", "local")
-        self._transcriber = self._create_transcriber(backend_type)
+        # ローカルTranscriberは共有インスタンス（遅延初期化）
+        self._local_transcriber: Optional[Transcriber] = None
 
         self._input_handler = InputHandler()
-        
+
         # VADモデルをバックグラウンドでプリロード（初回入力時の遅延を防ぐ）
         self._preload_vad_model()
 
-    def _create_transcriber(self, backend_type: str):
+    def _get_transcriber_for_slot(self, slot: HotkeySlot) -> Union[Transcriber, GroqTranscriber, OpenAITranscriber]:
         """
-        バックエンドタイプに応じたTranscriberを作成する。
+        スロットに対応するTranscriberを取得する。
+
+        ローカルバックエンドの場合は共有インスタンスを返し、
+        APIバックエンドの場合はスロット固有のインスタンスを返す。
 
         Args:
-            backend_type: "local", "groq", または "openai"
+            slot: ホットキースロット
 
         Returns:
-            Transcriber、GroqTranscriber、またはOpenAITranscriberのインスタンス
+            Transcriberインスタンス
         """
-        if backend_type == TranscriptionBackend.GROQ.value:
+        if slot.backend == TranscriptionBackend.LOCAL.value:
+            if self._local_transcriber is None:
+                self._local_transcriber = self._create_local_transcriber()
+            return self._local_transcriber
+        else:
+            return slot.api_transcriber
+
+    def _create_api_transcriber(self, slot: HotkeySlot) -> Optional[Union[GroqTranscriber, OpenAITranscriber]]:
+        """
+        APIバックエンドのTranscriberを作成する。
+
+        Args:
+            slot: ホットキースロット
+
+        Returns:
+            APITranscriberインスタンス、またはNone
+        """
+        language = self._config.get("language", "ja")
+        vad_filter = self._config.get("vad_filter", True)
+        vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
+
+        if slot.backend == TranscriptionBackend.GROQ.value:
             transcriber = GroqTranscriber(
-                model=self._config.get("groq_model", "whisper-large-v3-turbo"),
-                language=self._config.get("language", "ja"),
-                prompt=self._config.get("groq_prompt", ""),
-                vad_filter=self._config.get("vad_filter", True),
-                vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
+                model=slot.api_model,
+                language=language,
+                prompt=slot.api_prompt,
+                vad_filter=vad_filter,
+                vad_min_silence_duration_ms=vad_min_silence,
             )
 
             if not transcriber.is_available():
                 logger.warning(
-                    "Groq APIが利用できません（SDKが未インストールまたはGROQ_API_KEYが未設定）。 "
-                    "ローカルGPU文字起こしにフォールバックします。"
+                    "Groq APIが利用できません（SDKが未インストールまたはGROQ_API_KEYが未設定）。"
                 )
                 self._show_backend_warning("groq_unavailable")
-                return self._create_local_transcriber()
+                return None
 
-            logger.info(f"Groq APIバックエンドを使用: モデル={transcriber.model}")
+            logger.info(f"ホットキー{slot.slot_id}: Groq API使用 (モデル={transcriber.model})")
             return transcriber
 
-        elif backend_type == TranscriptionBackend.OPENAI.value:
+        elif slot.backend == TranscriptionBackend.OPENAI.value:
             transcriber = OpenAITranscriber(
-                model=self._config.get("openai_model", "gpt-4o-mini-transcribe"),
-                language=self._config.get("language", "ja"),
-                prompt=self._config.get("openai_prompt", ""),
-                vad_filter=self._config.get("vad_filter", True),
-                vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
+                model=slot.api_model,
+                language=language,
+                prompt=slot.api_prompt,
+                vad_filter=vad_filter,
+                vad_min_silence_duration_ms=vad_min_silence,
             )
 
             if not transcriber.is_available():
                 logger.warning(
-                    "OpenAI APIが利用できません（SDKが未インストールまたはOPENAI_API_KEYが未設定）。 "
-                    "ローカルGPU文字起こしにフォールバックします。"
+                    "OpenAI APIが利用できません（SDKが未インストールまたはOPENAI_API_KEYが未設定）。"
                 )
                 self._show_backend_warning("openai_unavailable")
-                return self._create_local_transcriber()
+                return None
 
-            logger.info(f"OpenAI APIバックエンドを使用: モデル={transcriber.model}")
+            logger.info(f"ホットキー{slot.slot_id}: OpenAI API使用 (モデル={transcriber.model})")
             return transcriber
 
-        else:
-            return self._create_local_transcriber()
+        return None
 
     def _create_local_transcriber(self) -> Transcriber:
-        """ローカルGPU Transcriberを作成する。"""
+        """ローカルGPU Transcriberを作成する（共通）。"""
         logger.info("ローカルGPUバックエンド（faster-whisper）を使用")
+        local_config = self._config.get("local_backend", {})
         return Transcriber(
-            model_size=self._config.get("model_size"),
-            compute_type=self._config.get("compute_type", "float16"),
-            language=self._config.get("language"),
-            release_memory_delay=self._config.get("release_memory_delay", 300),
+            model_size=local_config.get("model_size", "base"),
+            compute_type=local_config.get("compute_type", "float16"),
+            language=self._config.get("language", "ja"),
+            release_memory_delay=local_config.get("release_memory_delay", 300),
             vad_filter=self._config.get("vad_filter", True),
             vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
-            condition_on_previous_text=self._config.get("condition_on_previous_text", False),
-            no_speech_threshold=self._config.get("no_speech_threshold", 0.6),
-            log_prob_threshold=self._config.get("log_prob_threshold", -1.0),
-            no_speech_prob_cutoff=self._config.get("no_speech_prob_cutoff", 0.7),
-            beam_size=self._config.get("beam_size", 5),
-            model_cache_dir=self._config.get("model_cache_dir", ""),
+            condition_on_previous_text=local_config.get("condition_on_previous_text", False),
+            no_speech_threshold=local_config.get("no_speech_threshold", 0.6),
+            log_prob_threshold=local_config.get("log_prob_threshold", -1.0),
+            no_speech_prob_cutoff=local_config.get("no_speech_prob_cutoff", 0.7),
+            beam_size=local_config.get("beam_size", 5),
+            model_cache_dir=local_config.get("model_cache_dir", ""),
         )
 
     def _show_backend_warning(self, warning_type: str) -> None:
@@ -171,14 +220,11 @@ class SuperWhisperApp(QObject):
         """
         def _preload_worker():
             try:
-                if isinstance(self._transcriber, (GroqTranscriber, OpenAITranscriber)):
-                    # Groq/OpenAIモードの場合
-                    self._transcriber.preload_vad()
-                elif hasattr(self._transcriber, 'vad_filter') and self._transcriber.vad_filter:
-                    # ローカルモードでVADが有効な場合
-                    # ローカルTranscriberのVADはfaster-whisper内部で処理されるため
-                    # 別途プリロードは不要
-                    pass
+                # APIバックエンドのスロットがあればVADをプリロード
+                if hasattr(self, '_hotkey_slots'):
+                    for slot in self._hotkey_slots.values():
+                        if slot.api_transcriber and hasattr(slot.api_transcriber, 'preload_vad'):
+                            slot.api_transcriber.preload_vad()
                 logger.debug("VADプリロード完了")
             except Exception as e:
                 logger.warning(f"VADプリロードに失敗しました: {e}")
@@ -216,15 +262,50 @@ class SuperWhisperApp(QObject):
         self._is_recording = False
         self._is_transcribing = False
         self._cancel_transcription = False
-        
-        # ホットキー設定
-        self._hotkey = self._config.get("hotkey", "<f2>")
-        self._hotkey_mode = self._config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
+        self._active_slot: Optional[int] = None  # 現在アクティブなスロット
+
+        # ホットキースロットの初期化
+        self._hotkey_slots: Dict[int, HotkeySlot] = {}
+        self._setup_hotkey_slots()
+
+        # 現在押されているキー（全スロット共通）
         self._pressed_keys: Set[str] = set()
-        self._required_keys: Set[str] = self._parse_hotkey(self._hotkey)
-        
+
         # スレッド制御
         self._monitoring = True
+
+    def _setup_hotkey_slots(self) -> None:
+        """両方のホットキースロットを設定する。"""
+        for slot_id in [1, 2]:
+            slot_config = self._config.get(f"hotkey{slot_id}", {})
+
+            hotkey = slot_config.get("hotkey", f"<f{slot_id + 1}>")
+            hotkey_mode = slot_config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
+            backend = slot_config.get("backend", "local")
+            api_model = slot_config.get("api_model", "")
+            api_prompt = slot_config.get("api_prompt", "")
+
+            # APIモデルのデフォルト値を設定
+            if not api_model and backend in ["groq", "openai"]:
+                defaults = self._config.get("default_api_models", {})
+                api_model = defaults.get(backend, "")
+
+            slot = HotkeySlot(
+                slot_id=slot_id,
+                hotkey=hotkey,
+                hotkey_mode=hotkey_mode,
+                required_keys=self._parse_hotkey(hotkey),
+                backend=backend,
+                api_model=api_model,
+                api_prompt=api_prompt,
+            )
+
+            # API Transcriberの作成（必要な場合）
+            if backend != "local":
+                slot.api_transcriber = self._create_api_transcriber(slot)
+
+            self._hotkey_slots[slot_id] = slot
+            logger.info(f"ホットキースロット{slot_id}: {hotkey} ({hotkey_mode}) -> {backend}")
 
     def _start_background_threads(self) -> None:
         """ホットキーと設定監視のバックグラウンドスレッドを開始する。"""
@@ -340,58 +421,69 @@ class SuperWhisperApp(QObject):
     # 録音と文字起こし
     # -------------------------------------------------------------------------
 
-    def start_recording(self) -> None:
-        """音声録音を開始する。"""
-        if self._is_recording:
+    def start_recording(self, slot_id: Optional[int] = None) -> None:
+        """
+        音声録音を開始する。
+
+        Args:
+            slot_id: アクティブなホットキースロットID
+        """
+        if self._is_recording or slot_id is None:
             return
-        
+
         # 進行中の文字起こしをキャンセル
         if self._is_transcribing:
             logger.info("新しい録音開始 - 現在の文字起こしをキャンセル")
             self._cancel_transcription = True
-        
-        logger.info("録音開始")
+
+        self._active_slot = slot_id
+        slot = self._hotkey_slots[slot_id]
+
+        logger.info(f"録音開始 (スロット {slot_id}, バックエンド: {slot.backend})")
         self._is_recording = True
         self.status_changed.emit("recording")
-        
-        # バックグラウンドでモデルをプリロード
-        threading.Thread(target=self._transcriber.load_model, daemon=True).start()
+
+        # 使用するTranscriberのモデルをプリロード
+        transcriber = self._get_transcriber_for_slot(slot)
+        threading.Thread(target=transcriber.load_model, daemon=True).start()
         self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
         """録音を停止して文字起こしを開始する。処理中はオーバーレイを表示。"""
-        if not self._is_recording:
+        if not self._is_recording or self._active_slot is None:
             return
-        
+
         stop_start = time.perf_counter()
         logger.info("録音停止")
         self._is_recording = False
         self._is_transcribing = True
         self._cancel_transcription = False
-        
+
         # 処理中状態を表示（キーを離してもオーバーレイは表示続行）
         self.status_changed.emit("transcribing")
-        
+
         audio_data = self._recorder.stop()
         audio_stop_time = (time.perf_counter() - stop_start) * 1000
         audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
-        
+
         # 開発者モード用に保存
         self._last_audio_duration = audio_duration
-        
-        # バックグラウンドで文字起こしを実行
+
+        # アクティブなスロットIDを保存して、バックグラウンドで文字起こしを実行
+        slot_id = self._active_slot
         threading.Thread(
             target=self._transcribe_worker,
-            args=(audio_data, time.perf_counter()),
+            args=(audio_data, slot_id, time.perf_counter()),
             daemon=True
         ).start()
 
-    def _transcribe_worker(self, audio_data, start_time: float = None) -> None:
+    def _transcribe_worker(self, audio_data, slot_id: int, start_time: float = None) -> None:
         """
         文字起こしワーカースレッド。
-        
+
         Args:
             audio_data: 音声データ
+            slot_id: 使用するスロットID
             start_time: 開始時刻（タイミング計測用）
         """
         try:
@@ -404,27 +496,30 @@ class SuperWhisperApp(QObject):
                 logger.info("処理前に文字起こしがキャンセルされました")
                 return
 
+            slot = self._hotkey_slots[slot_id]
+            transcriber = self._get_transcriber_for_slot(slot)
+
             transcribe_start = time.perf_counter()
-            text = self._transcriber.transcribe(audio_data)
+            text = transcriber.transcribe(audio_data)
             transcribe_time = (time.perf_counter() - transcribe_start) * 1000
-            
+
             # 開発者モード用に保存
             self._last_whisper_time = transcribe_time
-            
+
             # Transcriberから詳細なタイミング情報を取得（利用可能な場合）
-            self._last_vad_time = getattr(self._transcriber, 'last_vad_time', 0)
-            self._last_whisper_api_time = getattr(self._transcriber, 'last_api_time', 0)
-            
+            self._last_vad_time = getattr(transcriber, 'last_vad_time', 0)
+            self._last_whisper_api_time = getattr(transcriber, 'last_api_time', 0)
+
             # 処理後にキャンセルをチェック
             if self._cancel_transcription:
                 logger.info("文字起こしがキャンセルされました - 結果を破棄")
                 return
-            
+
             if start_time:
                 total_time = (time.perf_counter() - start_time) * 1000
                 # 開発者モード用に保存
                 self._last_total_time = total_time
-            
+
             self.text_ready.emit(text)
         finally:
             self._is_transcribing = False
@@ -436,29 +531,45 @@ class SuperWhisperApp(QObject):
 
 
     def _start_keyboard_listener(self) -> None:
-        """ホットキーモードに基づいてキーボードリスナーを開始する。"""
-        if self._hotkey_mode == HotkeyMode.HOLD.value:
+        """両方のホットキースロットを監視するキーボードリスナーを開始する。"""
+        # いずれかのスロットがHoldモードの場合は低レベルリスナーを使用
+        has_hold_mode = any(
+            slot.hotkey_mode == HotkeyMode.HOLD.value
+            for slot in self._hotkey_slots.values()
+        )
+
+        if has_hold_mode:
+            # Hold モードがある場合は低レベルリスナーを使用
             with keyboard.Listener(
                 on_press=self._handle_key_press,
                 on_release=self._handle_key_release
             ) as listener:
                 listener.join()
         else:
-            hotkey_map = {self._hotkey: self._on_activate_toggle}
+            # 両方Toggleモードの場合はGlobalHotKeysを使用
+            hotkey_map = {}
+            for slot_id, slot in self._hotkey_slots.items():
+                hotkey_map[slot.hotkey] = lambda sid=slot_id: self._on_activate_toggle(sid)
+
             with keyboard.GlobalHotKeys(hotkey_map) as h:
                 h.join()
 
-    def _on_activate_toggle(self) -> None:
-        """トグルモードのアクティベーションを処理する。"""
+    def _on_activate_toggle(self, slot_id: int) -> None:
+        """
+        トグルモードのアクティベーションを処理する。
+
+        Args:
+            slot_id: アクティベーションされたスロットID
+        """
         if not self._is_recording:
-            self.start_recording()
+            self.start_recording(slot_id)
         else:
             self.stop_and_transcribe()
 
     def _handle_key_press(self, key: Any) -> None:
         """
         キー押下イベントを処理する。
-        
+
         Args:
             key: 押されたキー
         """
@@ -466,16 +577,19 @@ class SuperWhisperApp(QObject):
             key_str = self._normalize_key(key)
             if key_str:
                 self._pressed_keys.add(key_str)
-                # 新しいマッチングロジック：汎用/左右指定の両方に対応
-                if self._check_hotkey_match() and not self._is_recording:
-                    self.start_recording()
+                # 録音中でなければ、どのスロットのホットキーかチェック
+                if not self._is_recording:
+                    for slot_id, slot in self._hotkey_slots.items():
+                        if self._check_hotkey_match_for_slot(slot):
+                            self.start_recording(slot_id)
+                            break
         except Exception:
             pass
 
     def _handle_key_release(self, key: Any) -> None:
         """
         キー解放イベントを処理する。
-        
+
         Args:
             key: 解放されたキー
         """
@@ -484,27 +598,30 @@ class SuperWhisperApp(QObject):
             if key_str and key_str in self._pressed_keys:
                 self._pressed_keys.remove(key_str)
                 # ホットキーに含まれるキーが離されたら録音停止
-                if self._is_recording and self._is_hotkey_key_released(key_str):
-                    self.stop_and_transcribe()
+                if self._is_recording and self._active_slot is not None:
+                    active_slot = self._hotkey_slots[self._active_slot]
+                    if self._is_hotkey_key_released_for_slot(key_str, active_slot):
+                        self.stop_and_transcribe()
         except Exception:
             pass
 
-    def _is_hotkey_key_released(self, key_str: str) -> bool:
+    def _is_hotkey_key_released_for_slot(self, key_str: str, slot: HotkeySlot) -> bool:
         """
-        解放されたキーがホットキーの一部かチェックする。
-        
+        解放されたキーが指定スロットのホットキーの一部かチェックする。
+
         汎用修飾キー（ctrl, alt, shift）の場合は対応する左右キーも確認。
-        
+
         Args:
             key_str: 解放されたキー文字列
-            
+            slot: チェック対象のスロット
+
         Returns:
             ホットキーの一部の場合True
         """
         # 直接マッチ
-        if key_str in self._required_keys:
+        if key_str in slot.required_keys:
             return True
-        
+
         # 汎用修飾キーへのマッピングをチェック
         specific_to_generic = {
             'ctrl_l': 'ctrl', 'ctrl_r': 'ctrl',
@@ -512,11 +629,11 @@ class SuperWhisperApp(QObject):
             'shift_l': 'shift', 'shift_r': 'shift',
             'cmd_l': 'cmd', 'cmd_r': 'cmd',
         }
-        
+
         generic_key = specific_to_generic.get(key_str)
-        if generic_key and generic_key in self._required_keys:
+        if generic_key and generic_key in slot.required_keys:
             return True
-        
+
         return False
 
     def _normalize_key(self, key: Any) -> Optional[str]:
@@ -570,13 +687,16 @@ class SuperWhisperApp(QObject):
         
         return result
 
-    def _check_hotkey_match(self) -> bool:
+    def _check_hotkey_match_for_slot(self, slot: HotkeySlot) -> bool:
         """
-        現在押されているキーがホットキー設定と一致するかチェックする。
-        
+        現在押されているキーが指定スロットのホットキー設定と一致するかチェックする。
+
         汎用修飾キー（ctrl, alt, shift）の場合は左右どちらでも一致、
         左右指定（ctrl_l, alt_r等）の場合は完全一致を要求。
-        
+
+        Args:
+            slot: チェック対象のスロット
+
         Returns:
             ホットキーが一致した場合True
         """
@@ -587,8 +707,8 @@ class SuperWhisperApp(QObject):
             'shift': ('shift_l', 'shift_r'),
             'cmd': ('cmd_l', 'cmd_r'),
         }
-        
-        for required_key in self._required_keys:
+
+        for required_key in slot.required_keys:
             if required_key in generic_to_specific:
                 # 汎用キー: 左右どちらかが押されていればOK
                 left, right = generic_to_specific[required_key]
@@ -598,7 +718,7 @@ class SuperWhisperApp(QObject):
                 # 具体的なキー（ctrl_l等）または通常キー: 完全一致
                 if required_key not in self._pressed_keys:
                     return False
-        
+
         return True
 
     # -------------------------------------------------------------------------
@@ -616,133 +736,56 @@ class SuperWhisperApp(QObject):
 
     def _apply_config_changes(self) -> None:
         """設定変更を適用する。"""
-        # ホットキー設定を更新
-        new_hotkey = self._config.get("hotkey", "<f2>")
-        new_mode = self._config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
-        
-        if new_hotkey != self._hotkey or new_mode != self._hotkey_mode:
-            self._hotkey = new_hotkey
-            self._hotkey_mode = new_mode
-            self._required_keys = self._parse_hotkey(self._hotkey)
-            logger.info(f"ホットキーを更新: {self._hotkey}")
-        
-        # Transcriber設定を更新
-        self._update_transcriber_settings()
+        # ホットキースロット設定を更新
+        slots_changed = False
+        for slot_id in [1, 2]:
+            slot_config = self._config.get(f"hotkey{slot_id}", {})
+            new_hotkey = slot_config.get("hotkey", f"<f{slot_id + 1}>")
+            new_mode = slot_config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
+            new_backend = slot_config.get("backend", "local")
 
-    def _update_transcriber_settings(self) -> None:
-        """設定からTranscriber設定を更新する。"""
-        new_backend = self._config.get("transcription_backend", "local")
+            current_slot = self._hotkey_slots.get(slot_id)
+            if current_slot:
+                if (new_hotkey != current_slot.hotkey or
+                    new_mode != current_slot.hotkey_mode or
+                    new_backend != current_slot.backend):
+                    slots_changed = True
+                    logger.info(f"ホットキースロット{slot_id}を更新: {new_hotkey} -> {new_backend}")
 
-        # 現在のバックエンドタイプを判定
-        if isinstance(self._transcriber, GroqTranscriber):
-            current_backend = "groq"
-        elif isinstance(self._transcriber, OpenAITranscriber):
-            current_backend = "openai"
-        else:
-            current_backend = "local"
+        # スロット設定が変更された場合は再初期化
+        if slots_changed:
+            self._setup_hotkey_slots()
 
-        # バックエンドが変更された場合 - Transcriberを再作成
-        if new_backend != current_backend:
-            logger.info(f"文字起こしバックエンドを切り替え: {current_backend} -> {new_backend}")
-
-            # 古いTranscriberをアンロード
-            if hasattr(self._transcriber, 'unload_model'):
-                self._transcriber.unload_model()
-
-            # 新しいTranscriberを作成
-            self._transcriber = self._create_transcriber(new_backend)
-            return
-
-        # 同じバックエンド - 設定を更新
-        if current_backend == "local":
-            self._update_local_transcriber_settings()
-        elif current_backend == "groq":
-            self._update_groq_transcriber_settings()
-        else:
-            self._update_openai_transcriber_settings()
+        # ローカルTranscriber設定を更新
+        self._update_local_transcriber_settings()
 
     def _update_local_transcriber_settings(self) -> None:
         """ローカルTranscriber設定を更新する。"""
-        if not isinstance(self._transcriber, Transcriber):
+        if self._local_transcriber is None:
             return
 
-        new_model_size = self._config.get("model_size")
-        model_changed = new_model_size != self._transcriber.model_size
+        local_config = self._config.get("local_backend", {})
+        new_model_size = local_config.get("model_size", "base")
 
-        # 設定を更新
-        self._transcriber.model_size = new_model_size
-        self._transcriber.compute_type = self._config.get("compute_type", "float16")
-        self._transcriber.language = self._config.get("language")
-        self._transcriber.release_memory_delay = self._config.get("release_memory_delay", 300)
-        self._transcriber.vad_filter = self._config.get("vad_filter", True)
-        self._transcriber.vad_min_silence_duration_ms = self._config.get("vad_min_silence_duration_ms", 500)
-        self._transcriber.condition_on_previous_text = self._config.get("condition_on_previous_text", False)
-        self._transcriber.no_speech_threshold = self._config.get("no_speech_threshold", 0.6)
-        self._transcriber.log_prob_threshold = self._config.get("log_prob_threshold", -1.0)
-        self._transcriber.no_speech_prob_cutoff = self._config.get("no_speech_prob_cutoff", 0.7)
-        self._transcriber.beam_size = self._config.get("beam_size", 5)
-
-        new_cache_dir = self._config.get("model_cache_dir", "")
-        self._transcriber.model_cache_dir = new_cache_dir or None
-
-        # 設定が変更された場合はモデルをアンロード
+        # model_sizeが変更された場合、モデルをアンロード
+        model_changed = new_model_size != self._local_transcriber.model_size
         if model_changed:
-            if self._transcriber.model is not None:
-                logger.info("モデル設定が変更されました。再読み込みのためアンロードします...")
-                self._transcriber.unload_model()
+            logger.info(f"ローカルモデルサイズ変更: {self._local_transcriber.model_size} -> {new_model_size}")
+            self._local_transcriber.model_size = new_model_size
+            if self._local_transcriber.model is not None:
+                self._local_transcriber.unload_model()
 
-    def _update_groq_transcriber_settings(self) -> None:
-        """Groq Transcriber設定を更新する。"""
-        if not isinstance(self._transcriber, GroqTranscriber):
-            return
+        # 他の設定も更新
+        self._local_transcriber.compute_type = local_config.get("compute_type", "float16")
+        self._local_transcriber.language = self._config.get("language", "ja")
+        self._local_transcriber.release_memory_delay = local_config.get("release_memory_delay", 300)
+        self._local_transcriber.vad_filter = self._config.get("vad_filter", True)
+        self._local_transcriber.vad_min_silence_duration_ms = self._config.get("vad_min_silence_duration_ms", 500)
+        self._local_transcriber.condition_on_previous_text = local_config.get("condition_on_previous_text", False)
+        self._local_transcriber.no_speech_threshold = local_config.get("no_speech_threshold", 0.6)
+        self._local_transcriber.log_prob_threshold = local_config.get("log_prob_threshold", -1.0)
+        self._local_transcriber.no_speech_prob_cutoff = local_config.get("no_speech_prob_cutoff", 0.7)
+        self._local_transcriber.beam_size = local_config.get("beam_size", 5)
 
-        # Groq設定を更新
-        self._transcriber.model = self._config.get("groq_model", "whisper-large-v3-turbo")
-        self._transcriber.language = self._config.get("language", "ja")
-        self._transcriber.prompt = self._config.get("groq_prompt", "")
-        
-        # VAD設定を更新
-        vad_filter_enabled = self._config.get("vad_filter", True)
-        vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
-        
-        # VAD設定が変更されたかチェック
-        if vad_filter_enabled != self._transcriber.vad_enabled:
-            self._transcriber.vad_enabled = vad_filter_enabled
-            if vad_filter_enabled and self._transcriber._vad_filter is None:
-                from .core.vad import VadFilter
-                self._transcriber._vad_filter = VadFilter(
-                    min_silence_duration_ms=vad_min_silence,
-                    use_cuda=True
-                )
-            elif not vad_filter_enabled:
-                self._transcriber._vad_filter = None
-        
-        logger.debug(f"Groq設定を更新: model={self._transcriber.model}, vad={vad_filter_enabled}")
-
-    def _update_openai_transcriber_settings(self) -> None:
-        """OpenAI Transcriber設定を更新する。"""
-        if not isinstance(self._transcriber, OpenAITranscriber):
-            return
-
-        # OpenAI設定を更新
-        self._transcriber.model = self._config.get("openai_model", "gpt-4o-mini-transcribe")
-        self._transcriber.language = self._config.get("language", "ja")
-        self._transcriber.prompt = self._config.get("openai_prompt", "")
-
-        # VAD設定を更新
-        vad_filter_enabled = self._config.get("vad_filter", True)
-        vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
-
-        # VAD設定が変更されたかチェック
-        if vad_filter_enabled != self._transcriber.vad_enabled:
-            self._transcriber.vad_enabled = vad_filter_enabled
-            if vad_filter_enabled and self._transcriber._vad_filter is None:
-                from .core.vad import VadFilter
-                self._transcriber._vad_filter = VadFilter(
-                    min_silence_duration_ms=vad_min_silence,
-                    use_cuda=True
-                )
-            elif not vad_filter_enabled:
-                self._transcriber._vad_filter = None
-
-        logger.debug(f"OpenAI設定を更新: model={self._transcriber.model}, vad={vad_filter_enabled}")
+        new_cache_dir = local_config.get("model_cache_dir", "")
+        self._local_transcriber.model_cache_dir = new_cache_dir or None

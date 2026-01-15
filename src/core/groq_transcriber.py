@@ -9,10 +9,12 @@ import io
 import os
 from typing import Optional
 
+import httpx
+
 import numpy as np
 import numpy.typing as npt
 
-from .audio_utils import numpy_to_wav_bytes
+from .audio_utils import numpy_to_audio_bytes
 from ..config.constants import SAMPLE_RATE
 from ..utils.logger import get_logger
 from .vad import VadFilter
@@ -128,7 +130,12 @@ class GroqTranscriber:
                     "GROQ_API_KEY環境変数が設定されていません。 "
                     "export GROQ_API_KEY='gsk_...' で設定してください"
                 )
-            self._client = Groq(api_key=api_key)
+            # HTTPコネクションプーリングで高速化 + 20秒タイムアウト
+            http_client = httpx.Client(
+                timeout=httpx.Timeout(20.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+            )
+            self._client = Groq(api_key=api_key, http_client=http_client)
         return self._client
 
     def transcribe(self, audio_data: npt.NDArray[np.float32]) -> str:
@@ -166,10 +173,10 @@ class GroqTranscriber:
             return "Error: GROQ_API_KEY環境変数が設定されていません"
 
         try:
-            # NumPy配列をWAVバイト列に変換
-            wav_bytes = numpy_to_wav_bytes(audio_data, self.sample_rate)
-            audio_file = io.BytesIO(wav_bytes)
-            audio_file.name = "audio.wav"
+            # NumPy配列をMP3に変換（WAVより約10倍小さい）、ffmpegがなければWAVにフォールバック
+            audio_bytes, audio_ext = numpy_to_audio_bytes(audio_data, self.sample_rate, format="mp3")
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = f"audio.{audio_ext}"
 
             # Groq API呼び出し（API時間を計測）
             api_start = time.perf_counter()

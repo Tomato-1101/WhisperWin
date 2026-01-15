@@ -18,6 +18,31 @@ from .constants import DEFAULT_CONFIG, SETTINGS_FILE_NAME
 logger = get_logger(__name__)
 
 
+def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    2つの辞書を深くマージする。
+
+    updatesの値がbaseの値を上書きする。
+    ネストされた辞書も再帰的にマージされる。
+
+    Args:
+        base: ベースとなる辞書
+        updates: 更新値を含む辞書
+
+    Returns:
+        マージされた辞書
+    """
+    result = base.copy()
+    for key, value in updates.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # 両方が辞書の場合は再帰的にマージ
+            result[key] = _deep_merge(result[key], value)
+        else:
+            # それ以外は上書き
+            result[key] = value
+    return result
+
+
 class ConfigManager:
     """
     アプリケーション設定の管理クラス。
@@ -45,38 +70,90 @@ class ConfigManager:
         """設定ファイルのパスを解決する。"""
         if config_path:
             return config_path
-            
+
         if getattr(sys, 'frozen', False):
             # PyInstallerでビルドされた実行ファイルの場合
             base_dir = Path(sys.executable).parent
         else:
             # スクリプトとして実行：プロジェクトルート（srcの親）を使用
             base_dir = Path(__file__).parent.parent.parent
-            
+
         return str(base_dir / SETTINGS_FILE_NAME)
+
+    def _migrate_legacy_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        旧形式の設定を新形式にマイグレーションする。
+
+        旧形式（単一hotkey）を検出した場合、hotkey1に変換し、
+        hotkey2はデフォルト値を設定する。
+
+        Args:
+            config: 読み込まれた設定辞書
+
+        Returns:
+            マイグレーション済みの設定辞書
+        """
+        if "hotkey" in config and "hotkey1" not in config:
+            # 旧形式を検出
+            logger.info("旧設定フォーマットを検出。新形式にマイグレーション中...")
+
+            # 旧ホットキー設定をhotkey1に移行
+            config["hotkey1"] = {
+                "hotkey": config.pop("hotkey", "<f2>"),
+                "hotkey_mode": config.pop("hotkey_mode", "toggle"),
+                "backend": config.pop("transcription_backend", "local"),
+                "api_model": config.get("groq_model") or config.get("openai_model", ""),
+                "api_prompt": config.get("groq_prompt") or config.get("openai_prompt", ""),
+            }
+
+            # hotkey2にデフォルト値
+            config["hotkey2"] = DEFAULT_CONFIG["hotkey2"].copy()
+
+            # ローカルバックエンド設定を構造化
+            config["local_backend"] = {
+                "model_size": config.pop("model_size", DEFAULT_CONFIG["local_backend"]["model_size"]),
+                "compute_type": config.pop("compute_type", DEFAULT_CONFIG["local_backend"]["compute_type"]),
+                "release_memory_delay": config.pop("release_memory_delay", DEFAULT_CONFIG["local_backend"]["release_memory_delay"]),
+                "condition_on_previous_text": config.pop("condition_on_previous_text", DEFAULT_CONFIG["local_backend"]["condition_on_previous_text"]),
+                "no_speech_threshold": config.pop("no_speech_threshold", DEFAULT_CONFIG["local_backend"]["no_speech_threshold"]),
+                "log_prob_threshold": config.pop("log_prob_threshold", DEFAULT_CONFIG["local_backend"]["log_prob_threshold"]),
+                "no_speech_prob_cutoff": config.pop("no_speech_prob_cutoff", DEFAULT_CONFIG["local_backend"]["no_speech_prob_cutoff"]),
+                "beam_size": config.pop("beam_size", DEFAULT_CONFIG["local_backend"]["beam_size"]),
+                "model_cache_dir": config.pop("model_cache_dir", DEFAULT_CONFIG["local_backend"]["model_cache_dir"]),
+            }
+
+            # 旧キーを削除
+            for key in ["groq_model", "openai_model", "groq_prompt", "openai_prompt", "transcription_backend"]:
+                config.pop(key, None)
+
+            logger.info("設定マイグレーション完了")
+
+        return config
 
     def _load_config(self) -> Dict[str, Any]:
         """
         ファイルから設定を読み込み、デフォルト値とマージする。
-        
+
         Returns:
             すべてのキーが保証された設定辞書
         """
         if not os.path.exists(self.config_path):
             logger.warning(f"設定ファイルが見つかりません: {self.config_path}。デフォルト値を使用します。")
             return DEFAULT_CONFIG.copy()
-        
+
         try:
             self.last_mtime = os.path.getmtime(self.config_path)
-            
+
             with open(self.config_path, "r", encoding="utf-8") as f:
                 loaded_config = yaml.safe_load(f) or {}
-            
-            # デフォルト設定とマージ（すべてのキーを保証）
-            config = DEFAULT_CONFIG.copy()
-            config.update(loaded_config)
+
+            # 旧形式の設定をマイグレーション
+            loaded_config = self._migrate_legacy_config(loaded_config)
+
+            # デフォルト設定と深くマージ（ネストされた辞書も保証）
+            config = _deep_merge(DEFAULT_CONFIG, loaded_config)
             return config
-            
+
         except Exception as e:
             logger.error(f"設定読み込みエラー: {e}")
             return DEFAULT_CONFIG.copy()

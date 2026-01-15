@@ -104,6 +104,28 @@ class HotkeyConfig:
 
 
 @dataclass
+class HotkeySlotConfig:
+    """
+    個別ホットキースロットの設定。
+
+    各ホットキーに対して、キーバインド、動作モード、
+    使用するバックエンドとAPIモデル設定を保持する。
+
+    Attributes:
+        hotkey: ホットキー文字列（例: "<shift_r>", "<ctrl>+<space>"）
+        hotkey_mode: 動作モード（hold/toggle）
+        backend: 使用するバックエンド（local/groq/openai）
+        api_model: APIバックエンド使用時のモデル名
+        api_prompt: APIバックエンド使用時のプロンプト
+    """
+    hotkey: str = "<f2>"
+    hotkey_mode: str = HotkeyMode.TOGGLE.value
+    backend: str = TranscriptionBackend.LOCAL.value
+    api_model: str = ""
+    api_prompt: str = ""
+
+
+@dataclass
 class AppConfig:
     """
     アプリケーション全体の設定。

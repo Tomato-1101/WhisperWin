@@ -496,48 +496,122 @@ class SettingsWindow(QWidget):
             self._page_title.setText(item.text())
 
     def _create_general_page(self) -> QWidget:
-        """Generalページを作成する。"""
-        page = QWidget()
-        layout = QFormLayout(page)
-        layout.setSpacing(15)
-        layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        # ホットキー入力
-        self._hotkey_input = HotkeyInput()
-        layout.addRow("Global Hotkey:", self._hotkey_input)
-
-        # ホットキーモード
-        self._mode_combo = QComboBox()
-        self._mode_combo.addItems([m.value for m in HotkeyMode])
-        layout.addRow("Trigger Mode:", self._mode_combo)
-        
-        # 言語
-        self._lang_input = QLineEdit()
-        self._lang_input.setPlaceholderText("e.g. ja, en")
-        layout.addRow("Language:", self._lang_input)
-
-        return page
-
-    def _create_model_page(self) -> QWidget:
-        """Modelページを作成する。"""
+        """Generalページを作成する（2ホットキー対応）。"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setSpacing(20)
-        
+
+        # 2つのホットキー設定を横並びで配置
+        hotkeys_layout = QHBoxLayout()
+        hotkeys_layout.setSpacing(30)
+
+        # ホットキー1
+        hotkey1_group = self._create_hotkey_group(1)
+        hotkeys_layout.addWidget(hotkey1_group)
+
+        # ホットキー2
+        hotkey2_group = self._create_hotkey_group(2)
+        hotkeys_layout.addWidget(hotkey2_group)
+
+        layout.addLayout(hotkeys_layout)
+
+        # 共通設定
+        common_layout = QFormLayout()
+        self._lang_input = QLineEdit()
+        self._lang_input.setPlaceholderText("e.g. ja, en")
+        common_layout.addRow("Language (共通):", self._lang_input)
+        layout.addLayout(common_layout)
+
+        layout.addStretch()
+        return page
+
+    def _create_hotkey_group(self, slot_id: int) -> QGroupBox:
+        """
+        ホットキースロットのUIグループを作成する。
+
+        Args:
+            slot_id: スロットID（1または2）
+
+        Returns:
+            ホットキー設定のグループボックス
+        """
+        group = QGroupBox(f"Hotkey {slot_id}")
+        layout = QFormLayout(group)
+        layout.setSpacing(12)
+
+        # ホットキー入力
+        hotkey_input = HotkeyInput()
+        setattr(self, f"_hotkey{slot_id}_input", hotkey_input)
+        layout.addRow("Shortcut:", hotkey_input)
+
+        # モード選択
+        mode_combo = QComboBox()
+        mode_combo.addItems([m.value for m in HotkeyMode])
+        setattr(self, f"_mode{slot_id}_combo", mode_combo)
+        layout.addRow("Mode:", mode_combo)
+
         # バックエンド選択
-        backend_layout = QFormLayout()
-        self._backend_combo = QComboBox()
-        self._backend_combo.addItems([
+        backend_combo = QComboBox()
+        backend_combo.addItems([
             TranscriptionBackend.LOCAL.value,
             TranscriptionBackend.GROQ.value,
             TranscriptionBackend.OPENAI.value
         ])
-        self._backend_combo.currentTextChanged.connect(self._on_backend_changed)
-        backend_layout.addRow("Transcription Engine:", self._backend_combo)
-        layout.addLayout(backend_layout)
+        backend_combo.currentTextChanged.connect(
+            lambda text, sid=slot_id: self._on_slot_backend_changed(sid, text)
+        )
+        setattr(self, f"_backend{slot_id}_combo", backend_combo)
+        layout.addRow("Backend:", backend_combo)
+
+        # API設定（動的表示）
+        api_widget = self._create_api_settings_widget(slot_id)
+        setattr(self, f"_api{slot_id}_widget", api_widget)
+        layout.addRow("", api_widget)
+
+        return group
+
+    def _create_api_settings_widget(self, slot_id: int) -> QWidget:
+        """
+        APIバックエンド用の設定ウィジェットを作成する。
+
+        Args:
+            slot_id: スロットID
+
+        Returns:
+            API設定ウィジェット
+        """
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # モデル選択（Groq/OpenAI共通）
+        model_combo = QComboBox()
+        setattr(self, f"_api{slot_id}_model_combo", model_combo)
+        layout.addRow("Model:", model_combo)
+
+        # プロンプト入力
+        prompt_input = QLineEdit()
+        prompt_input.setPlaceholderText("Optional: hint text")
+        setattr(self, f"_api{slot_id}_prompt_input", prompt_input)
+        layout.addRow("Prompt:", prompt_input)
+
+        widget.setVisible(False)  # 初期状態は非表示
+        return widget
+
+    def _create_model_page(self) -> QWidget:
+        """Modelページを作成する（ローカルバックエンド共通設定）。"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(20)
+
+        # 説明ラベル
+        desc = QLabel("ローカルGPU設定は両方のホットキーで共通です。\nAPI設定は各ホットキーの「General」ページで設定します。")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
 
         # ローカル設定グループ
-        self._local_group = QGroupBox("Local Engine Settings (GPU)")
+        local_group = QGroupBox("Local Engine Settings (GPU - 共通)")
         local_layout = QFormLayout()
 
         self._model_combo = QComboBox()
@@ -548,51 +622,8 @@ class SettingsWindow(QWidget):
         self._compute_combo.addItems([c.value for c in ComputeType])
         local_layout.addRow("Compute Type:", self._compute_combo)
 
-        self._local_group.setLayout(local_layout)
-        layout.addWidget(self._local_group)
-
-        # Groq設定グループ
-        self._groq_group = QGroupBox("Groq API Settings (Cloud)")
-        groq_layout = QFormLayout()
-
-        self._api_key_status_label = QLabel()
-        groq_layout.addRow("API Key Status:", self._api_key_status_label)
-
-        self._groq_model_combo = QComboBox()
-        self._groq_model_combo.addItems([
-            "whisper-large-v3-turbo",
-            "whisper-large-v3",
-            "distil-whisper-large-v3-en"
-        ])
-        groq_layout.addRow("Cloud Model:", self._groq_model_combo)
-
-        self._groq_prompt_input = QLineEdit()
-        self._groq_prompt_input.setPlaceholderText("Optional: transcription hint text")
-        groq_layout.addRow("Prompt:", self._groq_prompt_input)
-
-        self._groq_group.setLayout(groq_layout)
-        layout.addWidget(self._groq_group)
-
-        # OpenAI設定グループ
-        self._openai_group = QGroupBox("OpenAI API Settings (Cloud)")
-        openai_layout = QFormLayout()
-
-        self._openai_api_key_status_label = QLabel()
-        openai_layout.addRow("API Key Status:", self._openai_api_key_status_label)
-
-        self._openai_model_combo = QComboBox()
-        self._openai_model_combo.addItems([
-            "gpt-4o-mini-transcribe",
-            "gpt-4o-transcribe"
-        ])
-        openai_layout.addRow("Cloud Model:", self._openai_model_combo)
-
-        self._openai_prompt_input = QLineEdit()
-        self._openai_prompt_input.setPlaceholderText("Optional: transcription hint text")
-        openai_layout.addRow("Prompt:", self._openai_prompt_input)
-
-        self._openai_group.setLayout(openai_layout)
-        layout.addWidget(self._openai_group)
+        local_group.setLayout(local_layout)
+        layout.addWidget(local_group)
 
         layout.addStretch()
         return page
@@ -618,56 +649,79 @@ class SettingsWindow(QWidget):
     def _load_current_settings(self) -> None:
         """設定ファイルから現在の値をUIに読み込む。"""
         config = self._config_manager.config
-        
-        # General
-        self._hotkey_input.setText(config.get("hotkey", "<f2>"))
-        self._mode_combo.setCurrentText(config.get("hotkey_mode", HotkeyMode.TOGGLE.value))
+
+        # General - 共通設定
         self._lang_input.setText(config.get("language", "ja"))
-        
-        # Model
-        self._backend_combo.setCurrentText(config.get("transcription_backend", "local"))
-        self._model_combo.setCurrentText(config.get("model_size", ModelSize.BASE.value))
-        self._compute_combo.setCurrentText(config.get("compute_type", ComputeType.FLOAT16.value))
-        self._groq_model_combo.setCurrentText(config.get("groq_model", "whisper-large-v3-turbo"))
-        self._groq_prompt_input.setText(config.get("groq_prompt", ""))
-        self._openai_model_combo.setCurrentText(config.get("openai_model", "gpt-4o-mini-transcribe"))
-        self._openai_prompt_input.setText(config.get("openai_prompt", ""))
 
-        # Groq APIキーステータス
-        has_groq_key = bool(os.environ.get("GROQ_API_KEY"))
-        groq_status_text = "✓ Ready" if has_groq_key else "✗ Not Set (Check Environment)"
-        groq_status_color = "green" if has_groq_key else "red"
-        self._api_key_status_label.setText(groq_status_text)
-        self._api_key_status_label.setStyleSheet(f"color: {groq_status_color}; font-weight: bold;")
+        # General - ホットキー1
+        hotkey1_config = config.get("hotkey1", {})
+        self._hotkey1_input.setText(hotkey1_config.get("hotkey", "<f2>"))
+        self._mode1_combo.setCurrentText(hotkey1_config.get("hotkey_mode", HotkeyMode.TOGGLE.value))
+        self._backend1_combo.setCurrentText(hotkey1_config.get("backend", "local"))
+        self._api1_prompt_input.setText(hotkey1_config.get("api_prompt", ""))
 
-        # OpenAI APIキーステータス
-        has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
-        openai_status_text = "✓ Ready" if has_openai_key else "✗ Not Set (Check Environment)"
-        openai_status_color = "green" if has_openai_key else "red"
-        self._openai_api_key_status_label.setText(openai_status_text)
-        self._openai_api_key_status_label.setStyleSheet(f"color: {openai_status_color}; font-weight: bold;")
-        
+        # General - ホットキー2
+        hotkey2_config = config.get("hotkey2", {})
+        self._hotkey2_input.setText(hotkey2_config.get("hotkey", "<f3>"))
+        self._mode2_combo.setCurrentText(hotkey2_config.get("hotkey_mode", HotkeyMode.TOGGLE.value))
+        self._backend2_combo.setCurrentText(hotkey2_config.get("backend", "local"))
+        self._api2_prompt_input.setText(hotkey2_config.get("api_prompt", ""))
+
+        # Model - ローカル共通設定
+        local_config = config.get("local_backend", {})
+        self._model_combo.setCurrentText(local_config.get("model_size", ModelSize.BASE.value))
+        self._compute_combo.setCurrentText(local_config.get("compute_type", ComputeType.FLOAT16.value))
+
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
-        self._memory_spin.setValue(config.get("release_memory_delay", 300))
+        self._memory_spin.setValue(local_config.get("release_memory_delay", 300))
 
-        # 表示状態を初期化
-        self._on_backend_changed(self._backend_combo.currentText())
+        # APIモデルとバックエンド表示状態を初期化
+        for slot_id in [1, 2]:
+            backend_combo = getattr(self, f"_backend{slot_id}_combo")
+            self._on_slot_backend_changed(slot_id, backend_combo.currentText())
 
-    def _on_backend_changed(self, backend: str) -> None:
+    def _on_slot_backend_changed(self, slot_id: int, backend: str) -> None:
         """
-        バックエンド選択変更を処理する。
+        スロットのバックエンド選択変更を処理する。
 
         Args:
+            slot_id: スロットID（1または2）
             backend: 選択されたバックエンド（"local", "groq", または "openai"）
         """
-        is_local = (backend == TranscriptionBackend.LOCAL.value)
-        is_groq = (backend == TranscriptionBackend.GROQ.value)
-        is_openai = (backend == TranscriptionBackend.OPENAI.value)
+        is_api = backend in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]
 
-        self._local_group.setVisible(is_local)
-        self._groq_group.setVisible(is_groq)
-        self._openai_group.setVisible(is_openai)
+        # API設定ウィジェットの表示/非表示
+        api_widget = getattr(self, f"_api{slot_id}_widget")
+        api_widget.setVisible(is_api)
+
+        # APIバックエンドの場合、モデルコンボボックスを更新
+        if is_api:
+            model_combo = getattr(self, f"_api{slot_id}_model_combo")
+            model_combo.clear()
+
+            if backend == TranscriptionBackend.GROQ.value:
+                model_combo.addItems([
+                    "whisper-large-v3-turbo",
+                    "whisper-large-v3",
+                    "distil-whisper-large-v3-en"
+                ])
+                # 設定から読み込み
+                config = self._config_manager.config
+                hotkey_config = config.get(f"hotkey{slot_id}", {})
+                api_model = hotkey_config.get("api_model", "whisper-large-v3-turbo")
+                model_combo.setCurrentText(api_model)
+
+            elif backend == TranscriptionBackend.OPENAI.value:
+                model_combo.addItems([
+                    "gpt-4o-mini-transcribe",
+                    "gpt-4o-transcribe"
+                ])
+                # 設定から読み込み
+                config = self._config_manager.config
+                hotkey_config = config.get(f"hotkey{slot_id}", {})
+                api_model = hotkey_config.get("api_model", "gpt-4o-mini-transcribe")
+                model_combo.setCurrentText(api_model)
 
     def _toggle_theme(self) -> None:
         """ダーク/ライトモードを切り替える。"""
@@ -685,27 +739,58 @@ class SettingsWindow(QWidget):
         self.setStyleSheet(stylesheet)
 
     def _save_settings(self) -> None:
-        """設定をファイルに保存する。既存の設定（dev_mode等）を保持。"""
-        # 既存のdev_mode設定を保持
+        """設定をファイルに保存する。"""
+        # 既存のdev_mode, llm_postprocess設定を保持
         existing_dev_mode = self._config_manager.get("dev_mode", False)
-        
-        new_config = {
-            "hotkey": self._hotkey_input.text(),
-            "hotkey_mode": self._mode_combo.currentText(),
-            "language": self._lang_input.text(),
-            "transcription_backend": self._backend_combo.currentText(),
-            "model_size": self._model_combo.currentText(),
-            "compute_type": self._compute_combo.currentText(),
-            "groq_model": self._groq_model_combo.currentText(),
-            "groq_prompt": self._groq_prompt_input.text(),
-            "openai_model": self._openai_model_combo.currentText(),
-            "openai_prompt": self._openai_prompt_input.text(),
-            "vad_filter": self._vad_check.isChecked(),
-            "release_memory_delay": self._memory_spin.value(),
-            "dark_mode": self._is_dark_mode,
+        existing_llm_postprocess = self._config_manager.get("llm_postprocess", {})
 
-            # 既存の設定を保持
+        new_config = {
+            # グローバル設定
+            "language": self._lang_input.text(),
+            "vad_filter": self._vad_check.isChecked(),
+            "vad_min_silence_duration_ms": self._config_manager.get("vad_min_silence_duration_ms", 500),
+
+            # ローカルバックエンド設定（共通）
+            "local_backend": {
+                "model_size": self._model_combo.currentText(),
+                "compute_type": self._compute_combo.currentText(),
+                "release_memory_delay": self._memory_spin.value(),
+                "condition_on_previous_text": self._config_manager.get("local_backend", {}).get("condition_on_previous_text", False),
+                "no_speech_threshold": self._config_manager.get("local_backend", {}).get("no_speech_threshold", 0.6),
+                "log_prob_threshold": self._config_manager.get("local_backend", {}).get("log_prob_threshold", -1.0),
+                "no_speech_prob_cutoff": self._config_manager.get("local_backend", {}).get("no_speech_prob_cutoff", 0.7),
+                "beam_size": self._config_manager.get("local_backend", {}).get("beam_size", 5),
+                "model_cache_dir": self._config_manager.get("local_backend", {}).get("model_cache_dir", ""),
+            },
+
+            # ホットキー1 設定
+            "hotkey1": {
+                "hotkey": self._hotkey1_input.text(),
+                "hotkey_mode": self._mode1_combo.currentText(),
+                "backend": self._backend1_combo.currentText(),
+                "api_model": self._api1_model_combo.currentText() if self._backend1_combo.currentText() != "local" else "",
+                "api_prompt": self._api1_prompt_input.text(),
+            },
+
+            # ホットキー2 設定
+            "hotkey2": {
+                "hotkey": self._hotkey2_input.text(),
+                "hotkey_mode": self._mode2_combo.currentText(),
+                "backend": self._backend2_combo.currentText(),
+                "api_model": self._api2_model_combo.currentText() if self._backend2_combo.currentText() != "local" else "",
+                "api_prompt": self._api2_prompt_input.text(),
+            },
+
+            # APIモデルデフォルト値
+            "default_api_models": self._config_manager.get("default_api_models", {
+                "groq": "whisper-large-v3-turbo",
+                "openai": "gpt-4o-mini-transcribe",
+            }),
+
+            # その他の設定
+            "dark_mode": self._is_dark_mode,
             "dev_mode": existing_dev_mode,
+            "llm_postprocess": existing_llm_postprocess,
         }
 
         if self._config_manager.save(new_config):

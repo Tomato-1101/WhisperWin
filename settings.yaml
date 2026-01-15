@@ -1,11 +1,24 @@
-beam_size: 5
 compute_type: float16
-condition_on_previous_text: false
-dark_mode: true
+dark_mode: false
+default_api_models:
+  groq: whisper-large-v3-turbo
+  openai: gpt-4o-mini-transcribe
 dev_mode: false
 groq_model: whisper-large-v3-turbo
 groq_prompt: ''
 hotkey: <shift_r>
+hotkey1:
+  api_model: gpt-4o-mini-transcribe
+  api_prompt: ''
+  backend: openai
+  hotkey: <ctrl_r>
+  hotkey_mode: hold
+hotkey2:
+  api_model: whisper-large-v3-turbo
+  api_prompt: ''
+  backend: groq
+  hotkey: <shift_r>
+  hotkey_mode: hold
 hotkey_mode: hold
 language: ja
 llm_postprocess:
@@ -14,11 +27,17 @@ llm_postprocess:
   model: llama-3.1-8b-instant
   provider: groq
   timeout: 5.0
-log_prob_threshold: -1.0
-model_cache_dir: D:/whisper_cache
-model_size: large-v3
-no_speech_prob_cutoff: 0.7
-no_speech_threshold: 0.6
+local_backend:
+  beam_size: 5
+  compute_type: float16
+  condition_on_previous_text: false
+  log_prob_threshold: -1.0
+  model_cache_dir: D:/whisper_cache
+  model_size: large-v3
+  no_speech_prob_cutoff: 0.7
+  no_speech_threshold: 0.6
+  release_memory_delay: 999
+model_size: base
 openai_model: gpt-4o-mini-transcribe
 openai_prompt: ''
 release_memory_delay: 999
