@@ -2,7 +2,7 @@
 設定ウィンドウモジュール
 
 macOSシステム設定風のUIでアプリケーション設定を管理する。
-ホットキー、モデル設定、LLM後処理設定などを提供。
+ホットキー、モデル設定などを提供。
 ダーク/ライトテーマ切り替えに対応。
 """
 
@@ -11,12 +11,11 @@ import math
 from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QRectF, QPointF
-from PySide6.QtGui import QIcon, QAction, QKeyEvent, QKeySequence, QPainter, QPainterPath, QColor, QPen, QBrush
+from PySide6.QtGui import QKeyEvent, QKeySequence, QPainter, QPainterPath, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -31,10 +30,8 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QSpinBox,
     QStackedWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
-    QToolButton
 )
 
 from ..config import ComputeType, ConfigManager, HotkeyMode, ModelSize, TranscriptionBackend
@@ -376,7 +373,7 @@ class SettingsWindow(QWidget):
     アプリケーション設定ウィンドウ。
     
     macOSシステム設定風のサイドバーナビゲーションUIを提供し、
-    General/Model/Advanced/LLMの4つのページで設定を管理する。
+    General/Model/Advancedの3つのページで設定を管理する。
     """
 
     def __init__(self) -> None:
@@ -470,7 +467,6 @@ class SettingsWindow(QWidget):
         self._add_page("General", self._create_general_page())
         self._add_page("Model", self._create_model_page())
         self._add_page("Advanced", self._create_advanced_page())
-        self._add_page("LLM", self._create_llm_page())
 
         # 最初のページを選択
         self._sidebar.setCurrentRow(0)
@@ -531,15 +527,19 @@ class SettingsWindow(QWidget):
         # バックエンド選択
         backend_layout = QFormLayout()
         self._backend_combo = QComboBox()
-        self._backend_combo.addItems([TranscriptionBackend.LOCAL.value, TranscriptionBackend.GROQ.value])
+        self._backend_combo.addItems([
+            TranscriptionBackend.LOCAL.value,
+            TranscriptionBackend.GROQ.value,
+            TranscriptionBackend.OPENAI.value
+        ])
         self._backend_combo.currentTextChanged.connect(self._on_backend_changed)
         backend_layout.addRow("Transcription Engine:", self._backend_combo)
         layout.addLayout(backend_layout)
-        
+
         # ローカル設定グループ
         self._local_group = QGroupBox("Local Engine Settings (GPU)")
         local_layout = QFormLayout()
-        
+
         self._model_combo = QComboBox()
         self._model_combo.addItems([m.value for m in ModelSize])
         local_layout.addRow("Model Size:", self._model_combo)
@@ -547,17 +547,17 @@ class SettingsWindow(QWidget):
         self._compute_combo = QComboBox()
         self._compute_combo.addItems([c.value for c in ComputeType])
         local_layout.addRow("Compute Type:", self._compute_combo)
-        
+
         self._local_group.setLayout(local_layout)
         layout.addWidget(self._local_group)
 
         # Groq設定グループ
         self._groq_group = QGroupBox("Groq API Settings (Cloud)")
         groq_layout = QFormLayout()
-        
+
         self._api_key_status_label = QLabel()
         groq_layout.addRow("API Key Status:", self._api_key_status_label)
-        
+
         self._groq_model_combo = QComboBox()
         self._groq_model_combo.addItems([
             "whisper-large-v3-turbo",
@@ -565,10 +565,35 @@ class SettingsWindow(QWidget):
             "distil-whisper-large-v3-en"
         ])
         groq_layout.addRow("Cloud Model:", self._groq_model_combo)
-        
+
+        self._groq_prompt_input = QLineEdit()
+        self._groq_prompt_input.setPlaceholderText("Optional: transcription hint text")
+        groq_layout.addRow("Prompt:", self._groq_prompt_input)
+
         self._groq_group.setLayout(groq_layout)
         layout.addWidget(self._groq_group)
-        
+
+        # OpenAI設定グループ
+        self._openai_group = QGroupBox("OpenAI API Settings (Cloud)")
+        openai_layout = QFormLayout()
+
+        self._openai_api_key_status_label = QLabel()
+        openai_layout.addRow("API Key Status:", self._openai_api_key_status_label)
+
+        self._openai_model_combo = QComboBox()
+        self._openai_model_combo.addItems([
+            "gpt-4o-mini-transcribe",
+            "gpt-4o-transcribe"
+        ])
+        openai_layout.addRow("Cloud Model:", self._openai_model_combo)
+
+        self._openai_prompt_input = QLineEdit()
+        self._openai_prompt_input.setPlaceholderText("Optional: transcription hint text")
+        openai_layout.addRow("Prompt:", self._openai_prompt_input)
+
+        self._openai_group.setLayout(openai_layout)
+        layout.addWidget(self._openai_group)
+
         layout.addStretch()
         return page
 
@@ -579,7 +604,7 @@ class SettingsWindow(QWidget):
         layout.setSpacing(15)
 
         # VAD設定
-        self._vad_check = QCheckBox("Enable Voice Activity Detection")
+        self._vad_check = QCheckBox("Enable VAD")
         layout.addRow("", self._vad_check)
 
         # メモリ解放遅延
@@ -588,66 +613,6 @@ class SettingsWindow(QWidget):
         self._memory_spin.setSuffix(" sec")
         layout.addRow("Release Memory Delay:", self._memory_spin)
 
-        return page
-
-    def _create_llm_page(self) -> QWidget:
-        """LLM後処理ページを作成する。"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(20)
-
-        # ===== LLM設定グループ =====
-        llm_settings_group = QGroupBox("LLM Post-Processing Settings")
-        llm_layout = QFormLayout()
-        llm_layout.setSpacing(15)
-        llm_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        # 有効化チェックボックス
-        self._llm_enabled_check = QCheckBox("Enable LLM Post-Processing")
-        self._llm_enabled_check.stateChanged.connect(self._on_llm_enabled_changed)
-        llm_layout.addRow("", self._llm_enabled_check)
-
-        # プロバイダー選択
-        self._llm_provider_combo = QComboBox()
-        self._llm_provider_combo.addItems(["groq", "cerebras"])
-        self._llm_provider_combo.currentTextChanged.connect(self._on_llm_provider_changed)
-        llm_layout.addRow("Provider:", self._llm_provider_combo)
-
-        # モデル選択（プロバイダーに応じて動的に変化）
-        self._llm_model_combo = QComboBox()
-        llm_layout.addRow("Model:", self._llm_model_combo)
-
-        # タイムアウト
-        self._llm_timeout_spin = QDoubleSpinBox()
-        self._llm_timeout_spin.setRange(1.0, 30.0)
-        self._llm_timeout_spin.setSingleStep(0.5)
-        self._llm_timeout_spin.setSuffix(" sec")
-        self._llm_timeout_spin.setDecimals(1)
-        llm_layout.addRow("Timeout:", self._llm_timeout_spin)
-
-        # エラー時フォールバック
-        self._llm_fallback_check = QCheckBox("Use original text if LLM fails")
-        llm_layout.addRow("", self._llm_fallback_check)
-
-        llm_settings_group.setLayout(llm_layout)
-        layout.addWidget(llm_settings_group)
-
-        # ===== APIキーステータスグループ =====
-        api_keys_group = QGroupBox("API Keys Status")
-        api_keys_layout = QFormLayout()
-        api_keys_layout.setSpacing(10)
-        api_keys_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self._groq_llm_key_status = QLabel()
-        api_keys_layout.addRow("Groq API Key:", self._groq_llm_key_status)
-
-        self._cerebras_key_status = QLabel()
-        api_keys_layout.addRow("Cerebras API Key:", self._cerebras_key_status)
-
-        api_keys_group.setLayout(api_keys_layout)
-        layout.addWidget(api_keys_group)
-
-        layout.addStretch()
         return page
 
     def _load_current_settings(self) -> None:
@@ -664,34 +629,27 @@ class SettingsWindow(QWidget):
         self._model_combo.setCurrentText(config.get("model_size", ModelSize.BASE.value))
         self._compute_combo.setCurrentText(config.get("compute_type", ComputeType.FLOAT16.value))
         self._groq_model_combo.setCurrentText(config.get("groq_model", "whisper-large-v3-turbo"))
-        
-        # APIキーステータス
-        has_key = bool(os.environ.get("GROQ_API_KEY"))
-        status_text = "✓ Ready" if has_key else "✗ Not Set (Check Environment)"
-        status_color = "green" if has_key else "red"
-        self._api_key_status_label.setText(status_text)
-        self._api_key_status_label.setStyleSheet(f"color: {status_color}; font-weight: bold;")
+        self._groq_prompt_input.setText(config.get("groq_prompt", ""))
+        self._openai_model_combo.setCurrentText(config.get("openai_model", "gpt-4o-mini-transcribe"))
+        self._openai_prompt_input.setText(config.get("openai_prompt", ""))
+
+        # Groq APIキーステータス
+        has_groq_key = bool(os.environ.get("GROQ_API_KEY"))
+        groq_status_text = "✓ Ready" if has_groq_key else "✗ Not Set (Check Environment)"
+        groq_status_color = "green" if has_groq_key else "red"
+        self._api_key_status_label.setText(groq_status_text)
+        self._api_key_status_label.setStyleSheet(f"color: {groq_status_color}; font-weight: bold;")
+
+        # OpenAI APIキーステータス
+        has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
+        openai_status_text = "✓ Ready" if has_openai_key else "✗ Not Set (Check Environment)"
+        openai_status_color = "green" if has_openai_key else "red"
+        self._openai_api_key_status_label.setText(openai_status_text)
+        self._openai_api_key_status_label.setStyleSheet(f"color: {openai_status_color}; font-weight: bold;")
         
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
         self._memory_spin.setValue(config.get("release_memory_delay", 300))
-
-        # LLM Settings
-        llm_config = config.get("llm_postprocess", {})
-        self._llm_enabled_check.setChecked(llm_config.get("enabled", False))
-        self._llm_provider_combo.setCurrentText(llm_config.get("provider", "groq"))
-        self._llm_timeout_spin.setValue(llm_config.get("timeout", 5.0))
-        self._llm_fallback_check.setChecked(llm_config.get("fallback_on_error", True))
-
-        # モデルリストを更新して現在のモデルを選択
-        self._on_llm_provider_changed(self._llm_provider_combo.currentText())
-        self._llm_model_combo.setCurrentText(llm_config.get("model", "llama-3.3-70b-versatile"))
-
-        # 有効状態を初期化
-        self._on_llm_enabled_changed(self._llm_enabled_check.checkState().value)
-
-        # APIキーステータスを更新
-        self._update_api_key_status()
 
         # 表示状態を初期化
         self._on_backend_changed(self._backend_combo.currentText())
@@ -699,108 +657,17 @@ class SettingsWindow(QWidget):
     def _on_backend_changed(self, backend: str) -> None:
         """
         バックエンド選択変更を処理する。
-        
+
         Args:
-            backend: 選択されたバックエンド（"local" or "groq"）
+            backend: 選択されたバックエンド（"local", "groq", または "openai"）
         """
         is_local = (backend == TranscriptionBackend.LOCAL.value)
+        is_groq = (backend == TranscriptionBackend.GROQ.value)
+        is_openai = (backend == TranscriptionBackend.OPENAI.value)
+
         self._local_group.setVisible(is_local)
-        self._groq_group.setVisible(not is_local)
-
-    def _on_llm_enabled_changed(self, state: int) -> None:
-        """
-        LLM有効化状態の変更を処理する。
-        
-        Args:
-            state: チェック状態の値
-        """
-        enabled = (state == Qt.CheckState.Checked.value)
-
-        # LLM関連ウィジェットの有効/無効を切り替え
-        self._llm_provider_combo.setEnabled(enabled)
-        self._llm_model_combo.setEnabled(enabled)
-        self._llm_timeout_spin.setEnabled(enabled)
-        self._llm_fallback_check.setEnabled(enabled)
-
-    def _on_llm_provider_changed(self, provider: str) -> None:
-        """
-        LLMプロバイダー変更時にモデルリストを更新する。
-        
-        Args:
-            provider: 選択されたプロバイダー
-        """
-        # 以前のプロバイダーの選択モデルを記憶
-        if hasattr(self, '_last_provider') and hasattr(self, '_provider_models'):
-            current_model = self._llm_model_combo.currentText()
-            if current_model:
-                self._provider_models[self._last_provider] = current_model
-        
-        # プロバイダーモデル辞書を初期化
-        if not hasattr(self, '_provider_models'):
-            self._provider_models = {}
-        
-        self._last_provider = provider
-        self._llm_model_combo.clear()
-
-        if provider == "groq":
-            models = [
-                # Production Models
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "openai/gpt-oss-120b",
-                "openai/gpt-oss-20b",
-                "qwen/qwen3-32b",
-                
-                # Specialized / Other Models
-                "moonshotai/kimi-k2-instruct-0905",
-                "allam-2-7b",
-                "groq/compound",
-                "groq/compound-mini",
-                
-                # Preview Models
-                "meta-llama/llama-4-maverick-17b-128e-instruct",
-                "meta-llama/llama-4-scout-17b-16e-instruct",
-            ]
-            default_model = "llama-3.3-70b-versatile"
-        elif provider == "cerebras":
-            # Cerebrasドキュメントのモデル一覧
-            models = [
-                "llama-3.3-70b",
-                "llama3.1-8b",
-                "qwen-3-32b",
-                "qwen-3-235b-a22b-instruct-2507",
-                "gpt-oss-120b",
-                "zai-glm-4.6"
-            ]
-            default_model = "llama-3.3-70b"
-        else:
-            models = []
-            default_model = ""
-
-        self._llm_model_combo.addItems(models)
-        
-        # 以前選択したモデルを復元、またはデフォルトを使用
-        last_model = self._provider_models.get(provider, default_model)
-        if last_model in models:
-            self._llm_model_combo.setCurrentText(last_model)
-        elif models:
-            self._llm_model_combo.setCurrentIndex(0)
-
-    def _update_api_key_status(self) -> None:
-        """APIキーステータスラベルを更新する。"""
-        # Groq
-        has_groq = bool(os.environ.get("GROQ_API_KEY"))
-        groq_text = "✓ Ready" if has_groq else "✗ Not Set"
-        groq_color = "green" if has_groq else "red"
-        self._groq_llm_key_status.setText(groq_text)
-        self._groq_llm_key_status.setStyleSheet(f"color: {groq_color}; font-weight: bold;")
-
-        # Cerebras
-        has_cerebras = bool(os.environ.get("CEREBRAS_API_KEY"))
-        cerebras_text = "✓ Ready" if has_cerebras else "✗ Not Set"
-        cerebras_color = "green" if has_cerebras else "red"
-        self._cerebras_key_status.setText(cerebras_text)
-        self._cerebras_key_status.setStyleSheet(f"color: {cerebras_color}; font-weight: bold;")
+        self._groq_group.setVisible(is_groq)
+        self._openai_group.setVisible(is_openai)
 
     def _toggle_theme(self) -> None:
         """ダーク/ライトモードを切り替える。"""
@@ -830,21 +697,15 @@ class SettingsWindow(QWidget):
             "model_size": self._model_combo.currentText(),
             "compute_type": self._compute_combo.currentText(),
             "groq_model": self._groq_model_combo.currentText(),
+            "groq_prompt": self._groq_prompt_input.text(),
+            "openai_model": self._openai_model_combo.currentText(),
+            "openai_prompt": self._openai_prompt_input.text(),
             "vad_filter": self._vad_check.isChecked(),
             "release_memory_delay": self._memory_spin.value(),
             "dark_mode": self._is_dark_mode,
-            
+
             # 既存の設定を保持
             "dev_mode": existing_dev_mode,
-
-            # LLM後処理設定（system_promptはprompt.xmlから読み込むので不要）
-            "llm_postprocess": {
-                "enabled": self._llm_enabled_check.isChecked(),
-                "provider": self._llm_provider_combo.currentText(),
-                "model": self._llm_model_combo.currentText(),
-                "timeout": self._llm_timeout_spin.value(),
-                "fallback_on_error": self._llm_fallback_check.isChecked(),
-            },
         }
 
         if self._config_manager.save(new_config):

@@ -64,13 +64,15 @@ class AppState(str, Enum):
 class TranscriptionBackend(str, Enum):
     """
     文字起こしバックエンドタイプ。
-    
+
     Attributes:
         LOCAL: ローカルGPU（faster-whisper）
         GROQ: Groq Cloud API
+        OPENAI: OpenAI GPT-4o Transcribe API
     """
     LOCAL = "local"
     GROQ = "groq"
+    OPENAI = "openai"
 
 
 @dataclass

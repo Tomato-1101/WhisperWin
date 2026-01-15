@@ -4,7 +4,8 @@ condition_on_previous_text: false
 dark_mode: true
 dev_mode: false
 groq_model: whisper-large-v3-turbo
-hotkey: <ctrl_r>
+groq_prompt: ''
+hotkey: <shift_r>
 hotkey_mode: hold
 language: ja
 llm_postprocess:
@@ -18,7 +19,9 @@ model_cache_dir: D:/whisper_cache
 model_size: large-v3
 no_speech_prob_cutoff: 0.7
 no_speech_threshold: 0.6
+openai_model: gpt-4o-mini-transcribe
+openai_prompt: ''
 release_memory_delay: 999
-transcription_backend: groq
+transcription_backend: openai
 vad_filter: true
 vad_min_silence_duration_ms: 500

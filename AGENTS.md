@@ -1,0 +1,35 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+- `src/app.py` orchestrates config, audio pipeline, and UI; `src/main.py` boots the Qt app.
+- `src/config/` holds enums/defaults and `config_manager.py` for hot-reloadable settings.
+- `src/core/` contains audio capture, VAD, transcription backends (local/Groq/OpenAI), LLM text processing, and simulated input.
+- `src/ui/` defines the Dynamic Island overlay, settings window, styles, and system tray integration; `src/utils/logger.py` configures logging.
+- Runtime config lives in `settings.yaml`; secrets go in `.env` (see `.env.example`). Packaging specs: `WhisperWin.spec` and `WhisperWin_debug.spec`; built artifacts land in `dist/` with staging in `build/`.
+
+## Build, Test, and Development Commands
+- Create env: `python -m venv venv` then `.\venv\Scripts\Activate.ps1`; install deps with `pip install -r requirements.txt` (install CUDA wheels via the provided PyTorch index if using GPU).
+- Run dev app: `python run.py` (reads `settings.yaml` and `.env`, opens system tray + overlay).
+- Package: `pyinstaller WhisperWin.spec --clean --noconfirm` → `dist/WhisperWin/WhisperWin.exe`.
+- Optional: `python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121` when CUDA wheels are missing.
+
+## Coding Style & Naming Conventions
+- Python 3.8+ with 4-space indentation; keep type hints and concise docstrings (existing ones are Japanese—match that tone).
+- Use snake_case for variables/config keys, PascalCase for classes, and upper snake for constants (`CONFIG_CHECK_INTERVAL_SEC`).
+- Prefer the shared logger (`src/utils/logger.py`) over ad-hoc prints; keep user-facing strings localized as currently written.
+- UI follows PySide6; keep signals/slots thread-safe and avoid blocking the Qt event loop.
+
+## Testing Guidelines
+- No automated tests exist; validate manually: hotkey start/stop, overlay state changes, local vs Groq/OpenAI backends, VAD behavior, and LLM post-processing fallback.
+- Run in `dev_mode: true` when investigating timing; review `dev_timing.log` and console logs for regressions.
+- When adding tests, prefer pytest-style functions and name files `test_*.py` alongside target modules.
+
+## Commit & Pull Request Guidelines
+- Follow the current history style: short, imperative summaries with optional prefixes (e.g., `docs: update project documentation`, `Improve overlay UI and hotkey handling`).
+- Each PR should describe behavior changes, affected settings, and manual test evidence (commands run + observed results); include screenshots/GIFs for UI changes.
+- Link related issues, call out config or env var additions (`.env`, `settings.yaml`), and note any migration steps for packagers or release builds.
+
+## Security & Configuration Tips
+- Keep API keys in `.env` (GROQ_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY); never commit secrets or local `settings.yaml`.
+- Verify `ffmpeg` is on PATH and select the correct CUDA wheel for your GPU; on fallback to cloud, ensure network access is available.
+- When switching backends, confirm `transcription_backend` and model names in `settings.yaml` align with installed/available services to avoid runtime warnings.

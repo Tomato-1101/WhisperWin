@@ -1,12 +1,13 @@
 """
-Groq API文字起こしモジュール
+OpenAI GPT-4o文字起こしモジュール
 
-Groq CloudのWhisper APIを使用して高速な文字起こしを行う。
-ローカルGPU不要で、リアルタイムの最大300倍の速度を実現。
+OpenAI Audio Transcriptions APIを使用して高精度な文字起こしを行う。
+gpt-4o-transcribe / gpt-4o-mini-transcribe モデルをサポート。
 """
 
 import io
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -19,42 +20,41 @@ from .vad import VadFilter
 
 logger = get_logger(__name__)
 
-# Groq SDKの遅延インポート（未インストール時のエラー回避）
-_groq_available: bool = False
+# OpenAI SDKの遅延インポート（未インストール時のエラー回避）
+_openai_available: bool = False
 try:
-    from groq import Groq
-    _groq_available = True
+    from openai import OpenAI
+    _openai_available = True
 except ImportError:
-    Groq = None  # type: ignore
-    logger.warning("Groq SDKがインストールされていません。pip install groq で追加できます")
+    OpenAI = None  # type: ignore
+    logger.warning("OpenAI SDKがインストールされていません。pip install openai で追加できます")
 
 
-class GroqTranscriber:
+class OpenAITranscriber:
     """
-    Groq API経由のクラウド文字起こしクラス。
-    
-    Groq CloudのWhisper APIを使用し、ローカルGPUなしで
-    超高速な文字起こしを実現する。
-    
+    OpenAI API経由のクラウド文字起こしクラス。
+
+    OpenAIのGPT-4oベースAudio Transcription APIを使用し、
+    高精度な文字起こしを実現する。
+
     特徴:
-    - 超高速文字起こし（リアルタイムの最大300倍）
+    - GPT-4oベースの高精度文字起こし
     - ローカルGPU不要
-    - whisper-large-v3-turbo等のモデルをサポート
-    
+    - gpt-4o-transcribe / gpt-4o-mini-transcribe をサポート
+
     Note:
-        GROQ_API_KEY環境変数の設定が必要。
+        OPENAI_API_KEY環境変数の設定が必要。
     """
 
-    # Groqでサポートされているモデル
+    # OpenAIでサポートされている文字起こしモデル
     AVAILABLE_MODELS = [
-        "whisper-large-v3-turbo",    # 推奨：最速
-        "whisper-large-v3",           # 高精度
-        "distil-whisper-large-v3-en"  # 英語最適化
+        "gpt-4o-transcribe",       # 高精度
+        "gpt-4o-mini-transcribe",  # 推奨：コスト効率
     ]
 
     def __init__(
         self,
-        model: str = "whisper-large-v3-turbo",
+        model: str = "gpt-4o-mini-transcribe",
         language: str = "ja",
         prompt: str = "",
         temperature: float = 0.0,
@@ -63,10 +63,10 @@ class GroqTranscriber:
         vad_min_silence_duration_ms: int = 500
     ) -> None:
         """
-        GroqTranscriberを初期化する。
+        OpenAITranscriberを初期化する。
 
         Args:
-            model: Groq Whisperモデル名
+            model: OpenAI文字起こしモデル名
             language: 言語コード（'ja', 'en'等）
             prompt: 文字起こしのヒントテキスト
             temperature: サンプリング温度（0.0=決定論的）
@@ -79,8 +79,8 @@ class GroqTranscriber:
         self.prompt = prompt
         self.temperature = temperature
         self.sample_rate = sample_rate
-        self._client: Optional[Groq] = None  # Groqクライアント（遅延初期化）
-        
+        self._client: Optional[OpenAI] = None  # OpenAIクライアント（遅延初期化）
+
         # VAD設定
         self.vad_enabled = vad_filter
         self._vad_filter: Optional[VadFilter] = None
@@ -91,6 +91,10 @@ class GroqTranscriber:
                 use_cuda=True  # VADにはCUDAを使用
             )
 
+        # タイミング情報
+        self.last_vad_time = 0
+        self.last_api_time = 0
+
         # モデル名の検証
         if model not in self.AVAILABLE_MODELS:
             logger.warning(
@@ -100,56 +104,54 @@ class GroqTranscriber:
 
     def is_available(self) -> bool:
         """
-        Groq APIが利用可能かを確認する。
-        
+        OpenAI APIが利用可能かを確認する。
+
         Returns:
             SDKがインストール済みでAPIキーが設定されている場合True
         """
-        if not _groq_available:
+        if not _openai_available:
             return False
 
-        api_key = os.environ.get("GROQ_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY")
         return bool(api_key)
 
-    def _get_client(self) -> Groq:
+    def _get_client(self) -> OpenAI:
         """
-        Groqクライアントを取得または作成する。
-        
+        OpenAIクライアントを取得または作成する。
+
         Returns:
-            初期化済みのGroqクライアント
-        
+            初期化済みのOpenAIクライアント
+
         Raises:
             RuntimeError: APIキーが設定されていない場合
         """
         if self._client is None:
-            api_key = os.environ.get("GROQ_API_KEY")
+            api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 raise RuntimeError(
-                    "GROQ_API_KEY環境変数が設定されていません。 "
-                    "export GROQ_API_KEY='gsk_...' で設定してください"
+                    "OPENAI_API_KEY環境変数が設定されていません。 "
+                    "export OPENAI_API_KEY='sk-...' で設定してください"
                 )
-            self._client = Groq(api_key=api_key)
+            self._client = OpenAI(api_key=api_key)
         return self._client
 
     def transcribe(self, audio_data: npt.NDArray[np.float32]) -> str:
         """
-        Groq APIを使用して音声を文字起こしする。
-        
+        OpenAI APIを使用して音声を文字起こしする。
+
         Args:
             audio_data: 音声データ（float32、モノラルのNumPy配列）
-        
+
         Returns:
             文字起こし結果、またはエラーメッセージ（"Error:"で始まる）
         """
         # タイミング情報をリセット
         self.last_vad_time = 0
         self.last_api_time = 0
-        
+
         if len(audio_data) == 0:
             return ""
 
-        import time
-        
         # VADフィルター：発話がない場合はAPI呼び出しをスキップ
         if self.vad_enabled and self._vad_filter:
             vad_start = time.perf_counter()
@@ -157,13 +159,13 @@ class GroqTranscriber:
             self.last_vad_time = (time.perf_counter() - vad_start) * 1000
             logger.info(f"VADチェック: has_speech={has_speech}, vad_time={self.last_vad_time:.0f}ms")
             if not has_speech:
-                logger.debug("VAD: 発話が検出されなかったため、Groq API呼び出しをスキップします。")
+                logger.debug("VAD: 発話が検出されなかったため、OpenAI API呼び出しをスキップします。")
                 return ""
 
         if not self.is_available():
-            if not _groq_available:
-                return "Error: Groq SDKがインストールされていません。pip install groq で追加してください"
-            return "Error: GROQ_API_KEY環境変数が設定されていません"
+            if not _openai_available:
+                return "Error: OpenAI SDKがインストールされていません。pip install openai で追加してください"
+            return "Error: OPENAI_API_KEY環境変数が設定されていません"
 
         try:
             # NumPy配列をWAVバイト列に変換
@@ -171,7 +173,7 @@ class GroqTranscriber:
             audio_file = io.BytesIO(wav_bytes)
             audio_file.name = "audio.wav"
 
-            # Groq API呼び出し（API時間を計測）
+            # OpenAI API呼び出し（API時間を計測）
             api_start = time.perf_counter()
             client = self._get_client()
             transcription = client.audio.transcriptions.create(
@@ -192,46 +194,45 @@ class GroqTranscriber:
             else:
                 # 予期しない型への対応
                 text = str(transcription)
-            
+
             # 前後のスペース・改行を確実に除去
             text = text.strip()
-            
-            logger.debug(f"Groq文字起こし: {text[:100]}...")
+
+            logger.debug(f"OpenAI文字起こし: {text[:100]}...")
             return text
 
         except Exception as e:
-            logger.error(f"Groq文字起こしエラー: {e}")
+            logger.error(f"OpenAI文字起こしエラー: {e}")
             return f"Error: {e}"
 
     def load_model(self) -> None:
         """
-        Groqクライアントを事前初期化する（オプション）。
-        
-        Groq APIはサーバーレスのため、実際のモデルロードは不要。
+        OpenAIクライアントを事前初期化する（オプション）。
+
+        OpenAI APIはサーバーレスのため、実際のモデルロードは不要。
         """
         if self.is_available():
             try:
                 self._get_client()
-                logger.debug("Groqクライアントを初期化しました")
+                logger.debug("OpenAIクライアントを初期化しました")
             except Exception as e:
-                logger.warning(f"Groqクライアントの初期化に失敗: {e}")
+                logger.warning(f"OpenAIクライアントの初期化に失敗: {e}")
 
     def unload_model(self) -> None:
         """
         クライアント参照をクリアする。
-        
-        Groq APIはサーバーレスのため、キャッシュされたクライアントをクリアするのみ。
+
+        OpenAI APIはサーバーレスのため、キャッシュされたクライアントをクリアするのみ。
         """
         self._client = None
-        logger.debug("Groqクライアント参照をクリアしました")
+        logger.debug("OpenAIクライアント参照をクリアしました")
 
     def preload_vad(self) -> None:
         """
         VADモデルを事前にロードする。
-        
+
         アプリ起動時に呼び出すことで、最初の音声入力時の
         VADモデルロード遅延を回避できる。
         """
         if self.vad_enabled and self._vad_filter:
             self._vad_filter.preload_model()
-

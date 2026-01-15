@@ -15,7 +15,7 @@ from pynput import keyboard
 
 from .config import ConfigManager, HotkeyMode, TranscriptionBackend
 from .config.constants import CONFIG_CHECK_INTERVAL_SEC
-from .core import AudioRecorder, GroqTranscriber, InputHandler, TextProcessor, Transcriber
+from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber, Transcriber
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
@@ -69,9 +69,6 @@ class SuperWhisperApp(QObject):
         self._transcriber = self._create_transcriber(backend_type)
 
         self._input_handler = InputHandler()
-
-        # LLM後処理の初期化
-        self._setup_text_processor()
         
         # VADモデルをバックグラウンドでプリロード（初回入力時の遅延を防ぐ）
         self._preload_vad_model()
@@ -79,17 +76,18 @@ class SuperWhisperApp(QObject):
     def _create_transcriber(self, backend_type: str):
         """
         バックエンドタイプに応じたTranscriberを作成する。
-        
+
         Args:
-            backend_type: "local" または "groq"
-        
+            backend_type: "local", "groq", または "openai"
+
         Returns:
-            TranscriberまたはGroqTranscriberのインスタンス
+            Transcriber、GroqTranscriber、またはOpenAITranscriberのインスタンス
         """
         if backend_type == TranscriptionBackend.GROQ.value:
             transcriber = GroqTranscriber(
                 model=self._config.get("groq_model", "whisper-large-v3-turbo"),
                 language=self._config.get("language", "ja"),
+                prompt=self._config.get("groq_prompt", ""),
                 vad_filter=self._config.get("vad_filter", True),
                 vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
             )
@@ -104,6 +102,27 @@ class SuperWhisperApp(QObject):
 
             logger.info(f"Groq APIバックエンドを使用: モデル={transcriber.model}")
             return transcriber
+
+        elif backend_type == TranscriptionBackend.OPENAI.value:
+            transcriber = OpenAITranscriber(
+                model=self._config.get("openai_model", "gpt-4o-mini-transcribe"),
+                language=self._config.get("language", "ja"),
+                prompt=self._config.get("openai_prompt", ""),
+                vad_filter=self._config.get("vad_filter", True),
+                vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
+            )
+
+            if not transcriber.is_available():
+                logger.warning(
+                    "OpenAI APIが利用できません（SDKが未インストールまたはOPENAI_API_KEYが未設定）。 "
+                    "ローカルGPU文字起こしにフォールバックします。"
+                )
+                self._show_backend_warning("openai_unavailable")
+                return self._create_local_transcriber()
+
+            logger.info(f"OpenAI APIバックエンドを使用: モデル={transcriber.model}")
+            return transcriber
+
         else:
             return self._create_local_transcriber()
 
@@ -128,28 +147,32 @@ class SuperWhisperApp(QObject):
     def _show_backend_warning(self, warning_type: str) -> None:
         """
         バックエンド問題についてユーザーに警告を表示する。
-        
+
         Args:
-            warning_type: 警告タイプ（"groq_unavailable"等）
+            warning_type: 警告タイプ（"groq_unavailable", "openai_unavailable"等）
         """
-        if warning_type == "groq_unavailable":
-            self._overlay.show_temporary_message(
-                "Groq API unavailable\nUsing local GPU",
-                duration_ms=3000,
-                is_error=False
-            )
+        messages = {
+            "groq_unavailable": "Groq API unavailable\nUsing local GPU",
+            "openai_unavailable": "OpenAI API unavailable\nUsing local GPU",
+        }
+        message = messages.get(warning_type, "API unavailable\nUsing local GPU")
+        self._overlay.show_temporary_message(
+            message,
+            duration_ms=3000,
+            is_error=False
+        )
 
     def _preload_vad_model(self) -> None:
         """
         VADモデルをバックグラウンドでプリロードする。
-        
+
         アプリ起動時に呼び出すことで、最初の音声入力時の
         VADモデルロード遅延を回避する。
         """
         def _preload_worker():
             try:
-                if isinstance(self._transcriber, GroqTranscriber):
-                    # Groqモードの場合
+                if isinstance(self._transcriber, (GroqTranscriber, OpenAITranscriber)):
+                    # Groq/OpenAIモードの場合
                     self._transcriber.preload_vad()
                 elif hasattr(self._transcriber, 'vad_filter') and self._transcriber.vad_filter:
                     # ローカルモードでVADが有効な場合
@@ -159,37 +182,9 @@ class SuperWhisperApp(QObject):
                 logger.debug("VADプリロード完了")
             except Exception as e:
                 logger.warning(f"VADプリロードに失敗しました: {e}")
-        
+
         # バックグラウンドスレッドでプリロード
         threading.Thread(target=_preload_worker, daemon=True).start()
-
-    def _setup_text_processor(self) -> None:
-        """LLMテキスト後処理を初期化する。"""
-        llm_config = self._config.get("llm_postprocess", {})
-        self._text_processor_enabled = llm_config.get("enabled", False)
-
-        if self._text_processor_enabled:
-            self._text_processor = TextProcessor(
-                provider=llm_config.get("provider", "groq"),
-                model=llm_config.get("model", "llama-3.3-70b-versatile"),
-                timeout=llm_config.get("timeout", 5.0),
-                fallback_on_error=llm_config.get("fallback_on_error", True),
-            )
-
-            if not self._text_processor.is_available():
-                logger.warning(
-                    f"LLMプロバイダー {llm_config.get('provider')} が利用できません。 "
-                    "後処理を無効化します。"
-                )
-                self._text_processor_enabled = False
-                self._text_processor = None
-            else:
-                logger.info(
-                    f"LLM後処理を有効化: {llm_config.get('provider')} / "
-                    f"{llm_config.get('model')}"
-                )
-        else:
-            self._text_processor = None
 
     def _setup_ui_components(self) -> None:
         """UIコンポーネントを初期化する。"""
@@ -286,18 +281,6 @@ class SuperWhisperApp(QObject):
             self.status_changed.emit("idle")
             return
 
-        llm_time = 0
-        llm_api_time = 0
-        # LLM後処理
-        if self._text_processor_enabled and self._text_processor:
-            raw_text = text  # 処理前のテキストを保存
-            logger.info(f"[LLM処理前] {raw_text}")
-            llm_start = time.perf_counter()
-            text = self._text_processor.process(text)
-            llm_time = (time.perf_counter() - llm_start) * 1000
-            llm_api_time = getattr(self._text_processor, 'last_api_time', 0)
-            logger.info(f"[LLM処理後] {text}")
-
         # 開発者モード：出力を引用符で囲む
         dev_mode = self._config.get("dev_mode", False)
         if dev_mode:
@@ -311,18 +294,16 @@ class SuperWhisperApp(QObject):
 
         # 開発者モード：タイミングをファイルに記録
         if dev_mode:
-            self._log_timing_to_file(llm_time, llm_api_time, insert_time)
+            self._log_timing_to_file(insert_time)
 
         # 即座にアイドル状態に戻る（オーバーレイを消す）
         self.status_changed.emit("idle")
 
-    def _log_timing_to_file(self, llm_time: float, llm_api_time: float, insert_time: float) -> None:
+    def _log_timing_to_file(self, insert_time: float) -> None:
         """
         タイミングデータをdev_timing.logファイルに記録する。
         
         Args:
-            llm_time: LLM処理時間（ミリ秒）
-            llm_api_time: LLM API呼び出し時間（ミリ秒）
             insert_time: テキスト挿入時間（ミリ秒）
         """
         import datetime
@@ -335,14 +316,8 @@ class SuperWhisperApp(QObject):
         vad_time = getattr(self, '_last_vad_time', 0)
         whisper_api_time = getattr(self, '_last_whisper_api_time', 0)
         
-        # 実際の合計時間を計算（Whisper + LLM + Insert）
-        real_total_time = whisper_time + llm_time + insert_time
-        
-        # LLMプロバイダーとモデル情報を取得
-        llm_config = self._config.get("llm_postprocess", {})
-        llm_provider = llm_config.get("provider", "none")
-        llm_model = llm_config.get("model", "none")
-        llm_enabled = llm_config.get("enabled", False)
+        # 実際の合計時間を計算（Whisper + Insert）
+        real_total_time = whisper_time + insert_time
         
         # 詳細なログエントリ
         log_entry = (
@@ -350,7 +325,6 @@ class SuperWhisperApp(QObject):
             f"Audio: {audio_duration:.1f}s | "
             f"VAD: {vad_time:.0f}ms | "
             f"WhisperAPI: {whisper_api_time:.0f}ms | "
-            f"LLMAPI: {llm_api_time:.0f}ms ({llm_provider}/{llm_model}) | "
             f"Insert: {insert_time:.0f}ms | "
             f"Total: {real_total_time:.0f}ms\n"
         )
@@ -655,13 +629,17 @@ class SuperWhisperApp(QObject):
         # Transcriber設定を更新
         self._update_transcriber_settings()
 
-        # LLM後処理設定を更新
-        self._setup_text_processor()
-
     def _update_transcriber_settings(self) -> None:
         """設定からTranscriber設定を更新する。"""
         new_backend = self._config.get("transcription_backend", "local")
-        current_backend = "groq" if isinstance(self._transcriber, GroqTranscriber) else "local"
+
+        # 現在のバックエンドタイプを判定
+        if isinstance(self._transcriber, GroqTranscriber):
+            current_backend = "groq"
+        elif isinstance(self._transcriber, OpenAITranscriber):
+            current_backend = "openai"
+        else:
+            current_backend = "local"
 
         # バックエンドが変更された場合 - Transcriberを再作成
         if new_backend != current_backend:
@@ -678,8 +656,10 @@ class SuperWhisperApp(QObject):
         # 同じバックエンド - 設定を更新
         if current_backend == "local":
             self._update_local_transcriber_settings()
-        else:
+        elif current_backend == "groq":
             self._update_groq_transcriber_settings()
+        else:
+            self._update_openai_transcriber_settings()
 
     def _update_local_transcriber_settings(self) -> None:
         """ローカルTranscriber設定を更新する。"""
@@ -719,6 +699,7 @@ class SuperWhisperApp(QObject):
         # Groq設定を更新
         self._transcriber.model = self._config.get("groq_model", "whisper-large-v3-turbo")
         self._transcriber.language = self._config.get("language", "ja")
+        self._transcriber.prompt = self._config.get("groq_prompt", "")
         
         # VAD設定を更新
         vad_filter_enabled = self._config.get("vad_filter", True)
@@ -737,3 +718,31 @@ class SuperWhisperApp(QObject):
                 self._transcriber._vad_filter = None
         
         logger.debug(f"Groq設定を更新: model={self._transcriber.model}, vad={vad_filter_enabled}")
+
+    def _update_openai_transcriber_settings(self) -> None:
+        """OpenAI Transcriber設定を更新する。"""
+        if not isinstance(self._transcriber, OpenAITranscriber):
+            return
+
+        # OpenAI設定を更新
+        self._transcriber.model = self._config.get("openai_model", "gpt-4o-mini-transcribe")
+        self._transcriber.language = self._config.get("language", "ja")
+        self._transcriber.prompt = self._config.get("openai_prompt", "")
+
+        # VAD設定を更新
+        vad_filter_enabled = self._config.get("vad_filter", True)
+        vad_min_silence = self._config.get("vad_min_silence_duration_ms", 500)
+
+        # VAD設定が変更されたかチェック
+        if vad_filter_enabled != self._transcriber.vad_enabled:
+            self._transcriber.vad_enabled = vad_filter_enabled
+            if vad_filter_enabled and self._transcriber._vad_filter is None:
+                from .core.vad import VadFilter
+                self._transcriber._vad_filter = VadFilter(
+                    min_silence_duration_ms=vad_min_silence,
+                    use_cuda=True
+                )
+            elif not vad_filter_enabled:
+                self._transcriber._vad_filter = None
+
+        logger.debug(f"OpenAI設定を更新: model={self._transcriber.model}, vad={vad_filter_enabled}")

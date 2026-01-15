@@ -58,6 +58,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
     # Groq API設定
     "groq_model": "whisper-large-v3-turbo",  # APIキーは環境変数GROQ_API_KEYから取得
+    "groq_prompt": "",  # Groq API用プロンプト
+
+    # OpenAI API設定
+    "openai_model": "gpt-4o-mini-transcribe",  # APIキーは環境変数OPENAI_API_KEYから取得
+    "openai_prompt": "",  # OpenAI API用プロンプト
 
     # 文字起こし設定
     "release_memory_delay": DEFAULT_MEMORY_RELEASE_DELAY_SEC,
@@ -71,15 +76,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
     # 開発者モード - 出力を引用符で囲み、タイミングをファイルに記録
     "dev_mode": False,
-
-    # LLM後処理設定（system_promptはprompt.xmlから読み込む）
-    "llm_postprocess": {
-        "enabled": False,
-        "provider": "groq",
-        "model": "llama-3.3-70b-versatile",
-        "timeout": 5.0,
-        "fallback_on_error": True,
-    },
 }
 
 # ============================================

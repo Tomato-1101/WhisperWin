@@ -8,13 +8,13 @@
 from .audio_recorder import AudioRecorder
 from .groq_transcriber import GroqTranscriber
 from .input_handler import InputHandler
-from .text_processor import TextProcessor
+from .openai_transcriber import OpenAITranscriber
 from .transcriber import Transcriber
 
 __all__ = [
     "AudioRecorder",       # 音声録音
     "Transcriber",         # ローカルWhisper文字起こし
     "GroqTranscriber",     # Groq API文字起こし
+    "OpenAITranscriber",   # OpenAI API文字起こし
     "InputHandler",        # テキスト入力
-    "TextProcessor",       # LLM後処理
 ]

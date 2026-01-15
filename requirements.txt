@@ -30,5 +30,8 @@ groq>=0.4.0
 # Cerebras API (LLM post-processing - optional)
 cerebras-cloud-sdk>=1.0.0
 
+# OpenAI API (GPT-4o Transcription & LLM post-processing - optional)
+openai>=1.0.0
+
 # Environment variable management
 python-dotenv>=1.0.0
