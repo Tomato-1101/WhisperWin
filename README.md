@@ -422,12 +422,18 @@ pyinstaller SuperWhisperLike.spec --clean --noconfirm
 
 ### コントリビューション
 
+貢献を歓迎します！詳細な開発ガイドラインは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
+**クイックスタート:**
+
 1. Fork this repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. **CHANGELOG.md に変更を記録**
 4. Commit your changes (`git commit -m 'feat: Add amazing feature'`)
 5. Push to the branch (`git push origin feature/amazing-feature`)
 6. Open a Pull Request
+
+詳細なバージョニングルール、コミット規約、リリースプロセスは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ---
 
