@@ -42,18 +42,26 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 ### Core Application Flow
 
-1. **Hotkey Detection** (`src/app.py`): Keyboard listener runs in background thread, monitoring for configured hotkey (hold or toggle mode)
-2. **Audio Recording** (`src/core/audio_recorder.py`): Captures audio using sounddevice when hotkey triggered
-3. **Transcription** (`src/core/transcriber.py`): Processes audio with faster-whisper/WhisperModel on CUDA
-4. **Text Input** (`src/core/input_handler.py`): Injects transcribed text into active window using pynput
-5. **UI Updates**: PySide6 signals/slots coordinate updates to overlay and system tray
+1. **Dual Hotkey Detection** (`src/app.py`): Keyboard listener monitors TWO independent hotkeys simultaneously
+2. **Audio Recording** (`src/core/audio_recorder.py`): Captures audio using sounddevice when either hotkey triggered
+3. **Backend Selection**: Each hotkey can use different transcription backend (local/groq/openai)
+4. **Transcription** (`src/core/transcriber.py`): Processes audio with selected backend
+5. **Text Input** (`src/core/input_handler.py`): Injects transcribed text into active window using pynput
+6. **UI Updates**: PySide6 signals/slots coordinate updates to overlay and system tray
 
 ### Key Components
 
 **SuperWhisperApp** (`src/app.py`):
 - Central controller integrating all components
+- **Dual Hotkey Support**: Manages 2 independent hotkey slots
+  - Each slot: hotkey, mode (hold/toggle), backend (local/groq/openai), API model/prompt
+  - `HotkeySlot` dataclass holds per-slot configuration
+  - `_hotkey_slots: Dict[int, HotkeySlot]` manages both slots
+  - `_active_slot` tracks which slot is currently recording
+- **Shared Local Transcriber**: `_local_transcriber` instance shared by both slots (VRAM efficient)
+- **Per-Slot API Transcribers**: Each slot has its own GroqTranscriber/OpenAITranscriber
 - Manages two background daemon threads:
-  - Keyboard listener for hotkey detection
+  - Keyboard listener for dual hotkey detection
   - Config monitor for hot-reload support
 - Thread-safe communication via PySide6 signals (status_changed, text_ready)
 - Handles recording cancellation when new recording starts during transcription
@@ -67,8 +75,10 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 **ConfigManager** (`src/config/config_manager.py`):
 - Loads settings.yaml from project root (or executable directory when frozen)
+- **Automatic Migration**: Detects legacy config format and auto-converts to new structure
 - Monitors file mtime and triggers hot-reload without restart
-- Merges user config with DEFAULT_CONFIG from constants.py
+- Deep-merges user config with DEFAULT_CONFIG from constants.py (nested dict support)
+- `_deep_merge()` helper for recursive dict merging
 
 **DynamicIslandOverlay** (`src/ui/overlay.py`):
 - Frameless, always-on-top window at screen top-center
@@ -78,15 +88,45 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 ### Configuration System
 
-**settings.yaml** controls all runtime behavior:
-- Hotkey configuration (e.g., `<ctrl>+<space>`, `<f2>`)
-- Hotkey mode: `hold` (press-and-hold) or `toggle` (press-to-start/stop)
-- Model settings: size (tiny to large-v3), compute_type (float16/int8), language
-- VRAM management: release_memory_delay (seconds)
-- Hallucination mitigation: VAD filter, no_speech_threshold, no_speech_prob_cutoff
-- Advanced: beam_size, log_prob_threshold, condition_on_previous_text
+**settings.yaml** controls all runtime behavior with hierarchical structure:
 
-Changes are detected automatically by config monitor thread and applied without restart.
+```yaml
+# Global settings (shared by both hotkeys)
+language: ja
+vad_filter: true
+vad_min_silence_duration_ms: 500
+
+# Local backend settings (shared)
+local_backend:
+  model_size: large-v3
+  compute_type: float16
+  release_memory_delay: 300
+  # ... other Whisper parameters
+
+# Hotkey 1 configuration
+hotkey1:
+  hotkey: <shift_r>
+  hotkey_mode: hold
+  backend: openai
+  api_model: gpt-4o-mini-transcribe
+  api_prompt: ""
+
+# Hotkey 2 configuration
+hotkey2:
+  hotkey: <f2>
+  hotkey_mode: toggle
+  backend: groq
+  api_model: whisper-large-v3-turbo
+  api_prompt: ""
+```
+
+**Key Configuration Features**:
+- **Dual Hotkey**: Fixed 2 slots (`hotkey1` / `hotkey2`), each with independent settings
+- **Backend Selection**: Per-hotkey backend (local/groq/openai)
+- **Shared Local Settings**: `local_backend` section applies to both hotkeys
+- **API Models**: Different models per hotkey for Groq/OpenAI
+- **Hot-Reload**: Changes detected automatically by config monitor thread and applied without restart
+- **Backward Compatibility**: Old single-hotkey format auto-migrates to new structure
 
 ### Threading Model
 
@@ -190,3 +230,116 @@ Set `model_cache_dir` in settings.yaml to avoid HuggingFace Hub trying to create
 - 簡潔かつ明確に
 - 「何をするか」ではなく「なぜそうするか」を重視
 - 明らかなコードには不要なコメントを追加しない
+
+---
+
+## Development Workflow
+
+### 変更記録のルール（重要）
+
+**すべてのコード変更は必ず CHANGELOG.md に記録すること。**
+
+#### 記録のタイミング
+- 機能追加、変更、修正を実装した後
+- コミット前に変更内容をまとめる
+- Pull Request 作成時
+
+#### CHANGELOG.md の更新手順
+
+1. **Unreleased セクションに追加**
+   ```markdown
+   ## [Unreleased] - YYYY-MM-DD
+
+   ### Added
+   - 新機能の説明
+
+   ### Changed
+   - 変更内容の説明
+
+   ### Fixed
+   - 修正内容の説明
+   ```
+
+2. **記録すべき内容**
+   - **Added**: 新機能、新しいファイル、新しい設定
+   - **Changed**: 既存機能の変更、リファクタリング
+   - **Fixed**: バグ修正、エラー対応
+   - **Technical Details**: 技術的な詳細（変更したクラス、メソッド等）
+
+3. **記録例**
+   ```markdown
+   ### Added
+   - デュアルホットキー機能の実装
+     - 各ホットキーに異なるバックエンドを設定可能
+     - APIバックエンドで異なるモデル選択をサポート
+
+   ### Changed
+   - app.py の大幅なリファクタリング
+     - HotkeySlot データクラスを追加
+     - _hotkey_slots 辞書で複数ホットキーを管理
+
+   ### Technical Details
+   - **types.py**: HotkeySlotConfig データクラスを追加
+   - **constants.py**: DEFAULT_CONFIG を新構造に変更
+   ```
+
+#### コミットメッセージの規則
+
+- 変更内容を簡潔に記載
+- CHANGELOG.md の内容と一致させる
+- フォーマット: `<type>: <description>`
+  - `feat`: 新機能
+  - `fix`: バグ修正
+  - `refactor`: リファクタリング
+  - `docs`: ドキュメント更新
+  - `style`: コードスタイル変更
+
+例:
+```
+feat: デュアルホットキー機能の実装
+
+- 2つのホットキースロットを追加
+- 各スロットで異なるバックエンドを選択可能
+- 設定UIを2ホットキー対応に更新
+```
+
+### バージョニング規則
+
+セマンティックバージョニング (MAJOR.MINOR.PATCH) を使用:
+
+- **MAJOR**: 破壊的変更（設定ファイル構造の変更等）
+- **MINOR**: 後方互換性のある機能追加
+- **PATCH**: バグ修正とマイナーな改善
+
+### リリースプロセス
+
+1. CHANGELOG.md の Unreleased セクションを確認
+2. バージョン番号を決定
+3. Unreleased を新バージョンに変更
+4. コミット: `chore: bump version to x.y.z`
+5. タグ作成: `git tag vx.y.z`
+6. Push: `git push origin main --tags`
+
+---
+
+## Testing Guidelines
+
+### 機能追加時のテスト項目
+
+- **ホットキー1**: 設定したホットキーで録音→文字起こしが動作
+- **ホットキー2**: 別のホットキーで異なるバックエンドが使用される
+- **設定UI**: 両方のホットキー設定が正しく保存・読み込みされる
+- **ホットリロード**: settings.yaml 変更時に自動反映
+- **マイグレーション**: 旧設定フォーマットから正しく移行される
+
+### 動作確認コマンド
+
+```bash
+# 開発モードで起動
+python run.py
+
+# ビルドして実行
+pyinstaller SuperWhisperLike.spec --clean --noconfirm
+cd dist/SuperWhisperLike
+./SuperWhisperLike.exe
+```
