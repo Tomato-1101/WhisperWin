@@ -5,6 +5,7 @@
 すべてのコンポーネントを統合するメインコントローラー。
 """
 
+import queue
 import threading
 import time
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from pynput import keyboard
 
 from .config import ConfigManager, HotkeyMode, TranscriptionBackend
 from .config.constants import CONFIG_CHECK_INTERVAL_SEC
+from .config.types import TranscriptionTask
 from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber, Transcriber
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
@@ -261,8 +263,11 @@ class SuperWhisperApp(QObject):
         """アプリケーション状態を初期化する。"""
         self._is_recording = False
         self._is_transcribing = False
-        self._cancel_transcription = False
         self._active_slot: Optional[int] = None  # 現在アクティブなスロット
+
+        # キュー関連の状態変数
+        self._transcription_queue: queue.Queue = queue.Queue()
+        self._queue_worker_running = False
 
         # ホットキースロットの初期化
         self._hotkey_slots: Dict[int, HotkeySlot] = {}
@@ -346,20 +351,16 @@ class SuperWhisperApp(QObject):
     def _handle_transcription_result(self, text: str) -> None:
         """
         文字起こし結果を処理する。
-        
+
         Args:
             text: 文字起こしテキスト
         """
         if not text:
             logger.info("テキストが検出されませんでした。")
-            # idle状態に移行してオーバーレイを消す
-            self.status_changed.emit("idle")
             return
 
         if text.startswith("Error:"):
             logger.error(f"文字起こし失敗: {text}")
-            # idle状態に移行してオーバーレイを消す
-            self.status_changed.emit("idle")
             return
 
         # 開発者モード：出力を引用符で囲む
@@ -368,7 +369,7 @@ class SuperWhisperApp(QObject):
             text = f'"{text}"'
 
         logger.info(f"結果: {text}")
-        
+
         insert_start = time.perf_counter()
         self._input_handler.insert_text(text)
         insert_time = (time.perf_counter() - insert_start) * 1000
@@ -376,9 +377,6 @@ class SuperWhisperApp(QObject):
         # 開発者モード：タイミングをファイルに記録
         if dev_mode:
             self._log_timing_to_file(insert_time)
-
-        # 即座にアイドル状態に戻る（オーバーレイを消す）
-        self.status_changed.emit("idle")
 
     def _log_timing_to_file(self, insert_time: float) -> None:
         """
@@ -425,16 +423,14 @@ class SuperWhisperApp(QObject):
         """
         音声録音を開始する。
 
+        文字起こし中でも新しい録音を許可する。
+        結果はキューに追加され、順番に処理される。
+
         Args:
             slot_id: アクティブなホットキースロットID
         """
         if self._is_recording or slot_id is None:
             return
-
-        # 進行中の文字起こしをキャンセル
-        if self._is_transcribing:
-            logger.info("新しい録音開始 - 現在の文字起こしをキャンセル")
-            self._cancel_transcription = True
 
         self._active_slot = slot_id
         slot = self._hotkey_slots[slot_id]
@@ -449,80 +445,90 @@ class SuperWhisperApp(QObject):
         self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
-        """録音を停止して文字起こしを開始する。処理中はオーバーレイを表示。"""
+        """録音を停止して文字起こしタスクをキューに追加する。"""
         if not self._is_recording or self._active_slot is None:
             return
 
-        stop_start = time.perf_counter()
         logger.info("録音停止")
         self._is_recording = False
-        self._is_transcribing = True
-        self._cancel_transcription = False
-
-        # 処理中状態を表示（キーを離してもオーバーレイは表示続行）
-        self.status_changed.emit("transcribing")
 
         audio_data = self._recorder.stop()
-        audio_stop_time = (time.perf_counter() - stop_start) * 1000
-        audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
 
-        # 開発者モード用に保存
+        # 音声データが空の場合
+        if len(audio_data) == 0:
+            # キューワーカーが動いていなければidle状態に戻す
+            if not self._queue_worker_running:
+                self.status_changed.emit("idle")
+            return
+
+        # 開発者モード用: 音声時間を計算
+        audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
         self._last_audio_duration = audio_duration
 
-        # アクティブなスロットIDを保存して、バックグラウンドで文字起こしを実行
-        slot_id = self._active_slot
-        threading.Thread(
-            target=self._transcribe_worker,
-            args=(audio_data, slot_id, time.perf_counter()),
-            daemon=True
-        ).start()
+        # タスクをキューに追加
+        task = TranscriptionTask(
+            audio_data=audio_data,
+            slot_id=self._active_slot,
+            timestamp=time.perf_counter()
+        )
+        self._transcription_queue.put(task)
 
-    def _transcribe_worker(self, audio_data, slot_id: int, start_time: float = None) -> None:
+        # 処理中状態を表示
+        self.status_changed.emit("transcribing")
+
+        # ワーカーが動いていなければ開始
+        if not self._queue_worker_running:
+            self._start_queue_worker()
+
+    def _start_queue_worker(self) -> None:
+        """キュー処理ワーカースレッドを開始する。"""
+        self._queue_worker_running = True
+        self._is_transcribing = True
+        threading.Thread(target=self._queue_processor, daemon=True).start()
+
+    def _queue_processor(self) -> None:
+        """キューからタスクを順番に処理するワーカー。"""
+        try:
+            while True:
+                try:
+                    task = self._transcription_queue.get(timeout=0.1)
+                except queue.Empty:
+                    break  # キューが空になったら終了
+
+                self._process_transcription_task(task)
+                self._transcription_queue.task_done()
+        finally:
+            self._queue_worker_running = False
+            self._is_transcribing = False
+            # キューが空で録音中でなければidle状態に移行
+            if self._transcription_queue.empty() and not self._is_recording:
+                self.status_changed.emit("idle")
+
+    def _process_transcription_task(self, task: TranscriptionTask) -> None:
         """
-        文字起こしワーカースレッド。
+        単一の文字起こしタスクを処理する。
 
         Args:
-            audio_data: 音声データ
-            slot_id: 使用するスロットID
-            start_time: 開始時刻（タイミング計測用）
+            task: 処理する文字起こしタスク
         """
         try:
-            if len(audio_data) == 0:
-                self.text_ready.emit("")
-                return
-
-            # 開始前にキャンセルをチェック
-            if self._cancel_transcription:
-                logger.info("処理前に文字起こしがキャンセルされました")
-                return
-
-            slot = self._hotkey_slots[slot_id]
+            slot = self._hotkey_slots[task.slot_id]
             transcriber = self._get_transcriber_for_slot(slot)
 
             transcribe_start = time.perf_counter()
-            text = transcriber.transcribe(audio_data)
+            text = transcriber.transcribe(task.audio_data)
             transcribe_time = (time.perf_counter() - transcribe_start) * 1000
 
-            # 開発者モード用に保存
+            # タイミング情報を保存
             self._last_whisper_time = transcribe_time
-
-            # Transcriberから詳細なタイミング情報を取得（利用可能な場合）
             self._last_vad_time = getattr(transcriber, 'last_vad_time', 0)
             self._last_whisper_api_time = getattr(transcriber, 'last_api_time', 0)
-
-            # 処理後にキャンセルをチェック
-            if self._cancel_transcription:
-                logger.info("文字起こしがキャンセルされました - 結果を破棄")
-                return
-
-            if start_time:
-                total_time = (time.perf_counter() - start_time) * 1000
-                # 開発者モード用に保存
-                self._last_total_time = total_time
+            self._last_total_time = (time.perf_counter() - task.timestamp) * 1000
 
             self.text_ready.emit(text)
-        finally:
-            self._is_transcribing = False
+        except Exception as e:
+            logger.error(f"文字起こしエラー: {e}")
+            self.text_ready.emit("")
 
     # -------------------------------------------------------------------------
     # ホットキー処理

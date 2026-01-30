@@ -7,7 +7,7 @@
 
 from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 
 class HotkeyMode(str, Enum):
@@ -76,10 +76,25 @@ class TranscriptionBackend(str, Enum):
 
 
 @dataclass
+class TranscriptionTask:
+    """
+    キューに入れる文字起こしタスク。
+
+    Attributes:
+        audio_data: 音声データ（NumPy配列）
+        slot_id: 使用するホットキースロットID
+        timestamp: タスク作成時刻
+    """
+    audio_data: Any  # npt.NDArray[np.float32]
+    slot_id: int
+    timestamp: float
+
+
+@dataclass
 class TranscriberConfig:
     """
     文字起こしモジュールの設定。
-    
+
     ローカルWhisperモデルの各種パラメータを保持する。
     """
     model_size: str = ModelSize.BASE.value

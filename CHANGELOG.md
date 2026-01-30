@@ -2,9 +2,15 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
-## [Unreleased] - 2026-01-15
+## [Unreleased] - 2026-01-30
 
 ### Added
+- **文字起こしキューイング機能の実装**
+  - 文字起こし処理中に新しい録音を開始した場合、前の処理をキャンセルせずキューに追加
+  - すべての録音結果が順番に処理され、入力される
+  - `queue.Queue` を使用したスレッドセーフなタスク管理
+  - `TranscriptionTask` データクラスで音声データ、スロットID、タイムスタンプを保持
+
 - **CONTRIBUTING.md ドキュメント作成**
   - 詳細なバージョニングルール（X=大きな変更、Y=ユーザーが気づく変更、Z=小さな修正）
   - コミットメッセージ規約（type: description形式）
@@ -65,8 +71,20 @@ WhisperWinの変更履歴を記録するファイルです。
   - バックエンド変更時のAPI Transcriber再作成
   - ローカル設定変更時のモデルアンロード
 
+### Changed
+- **app.py のキューイングロジック変更**
+  - `start_recording()`: キャンセルロジックを削除、文字起こし中でも新しい録音を許可
+  - `stop_and_transcribe()`: タスクを `_transcription_queue` に追加し、ワーカーを起動
+  - `_transcribe_worker()` を削除、代わりに以下を実装:
+    - `_start_queue_worker()`: キュー処理ワーカースレッドを開始
+    - `_queue_processor()`: キューから順番にタスクを取得して処理
+    - `_process_transcription_task()`: 単一タスクの文字起こし処理
+  - `_handle_transcription_result()`: idle状態への移行を削除（ワーカーが管理）
+  - `_setup_state()`: `_cancel_transcription` を削除、キュー関連変数を追加
+
 ### Technical Details
 - **types.py**
+  - `TranscriptionTask` データクラスを追加（audio_data, slot_id, timestamp）
   - `HotkeySlotConfig` データクラスを追加
 
 - **constants.py**
