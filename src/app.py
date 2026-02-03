@@ -79,7 +79,8 @@ class SuperWhisperApp(QObject):
         self._setup_signals()
         self._setup_state()
         self._start_background_threads()
-        
+        self._preload_models_async()  # 状態初期化後にプリロード
+
         logger.info("アプリケーション準備完了。")
         self.status_changed.emit("idle")
 
@@ -98,9 +99,6 @@ class SuperWhisperApp(QObject):
         self._local_transcriber: Optional[Transcriber] = None
 
         self._input_handler = InputHandler()
-
-        # VADモデルをバックグラウンドでプリロード（初回入力時の遅延を防ぐ）
-        self._preload_vad_model()
 
     def _get_transcriber_for_slot(self, slot: HotkeySlot) -> Union[Transcriber, GroqTranscriber, OpenAITranscriber]:
         """
@@ -232,6 +230,54 @@ class SuperWhisperApp(QObject):
                 logger.warning(f"VADプリロードに失敗しました: {e}")
 
         # バックグラウンドスレッドでプリロード
+        threading.Thread(target=_preload_worker, daemon=True).start()
+
+    def _preload_local_transcriber(self) -> None:
+        """
+        ローカルTranscriberとWhisperモデルを事前にロードする。
+
+        最初の文字起こし時の遅延を回避するため、起動時に呼び出す。
+        """
+        try:
+            if self._local_transcriber is None:
+                logger.info("ローカルTranscriberをプリロード中...")
+                self._local_transcriber = self._create_local_transcriber()
+
+            logger.info("Whisperモデルをプリロード中...")
+            self._local_transcriber.load_model()
+            logger.info("Whisperモデルのプリロードが完了しました")
+        except Exception as e:
+            logger.warning(f"ローカルTranscriberのプリロードに失敗: {e}")
+
+    def _preload_models_async(self) -> None:
+        """
+        起動時にモデルをバックグラウンドでプリロードする。
+
+        UIをブロックせずに、VADとWhisperモデルをロードする。
+        """
+        if not self._config.get("preload_on_startup", True):
+            logger.info("起動時プリロードが無効です")
+            return
+
+        def _preload_worker():
+            try:
+                # 1. API Transcriber用VADをプリロード
+                for slot in self._hotkey_slots.values():
+                    if slot.api_transcriber and hasattr(slot.api_transcriber, 'preload_vad'):
+                        slot.api_transcriber.preload_vad()
+                        logger.info(f"スロット{slot.slot_id}のVADをプリロードしました")
+
+                # 2. ローカルバックエンドを使用するスロットがあればWhisperモデルをプリロード
+                uses_local_backend = any(
+                    slot.backend == "local" for slot in self._hotkey_slots.values()
+                )
+                if uses_local_backend:
+                    self._preload_local_transcriber()
+
+                logger.info("モデルプリロード完了")
+            except Exception as e:
+                logger.warning(f"モデルプリロードに失敗: {e}")
+
         threading.Thread(target=_preload_worker, daemon=True).start()
 
     def _setup_ui_components(self) -> None:

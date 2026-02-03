@@ -2,6 +2,31 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-02-03
+
+### Added
+- **起動時モデルプリロード機能の実装**
+  - 起動時にVADとWhisperモデルをバックグラウンドでプリロードし、最初の文字起こしを高速化
+  - `preload_on_startup` 設定オプションを追加（デフォルト: true）
+  - ローカルTranscriberの事前ロードメソッド `_preload_local_transcriber()` を実装
+  - 統合プリロードメソッド `_preload_models_async()` でVADとWhisperモデルを並行ロード
+  - ローカルバックエンド使用時のみWhisperモデルをプリロード（VRAM節約）
+
+### Fixed
+- **VADプリロードのタイミングバグを修正**
+  - `_preload_vad_model()` が `_hotkey_slots` 初期化前に呼ばれていた問題を修正
+  - `_setup_core_components()` からVADプリロード呼び出しを削除
+  - `_preload_models_async()` を `_setup_state()` 後に実行するように変更
+
+### Technical Details
+- **src/app.py**:
+  - `_preload_local_transcriber()`: ローカルTranscriberとWhisperモデルを事前ロード
+  - `_preload_models_async()`: 統合プリロードメソッド（VAD + Whisperモデル）
+  - `__init__()`: `_preload_models_async()` 呼び出しを追加
+  - `_setup_core_components()`: `_preload_vad_model()` 呼び出しを削除
+- **src/config/constants.py**:
+  - `DEFAULT_CONFIG` に `preload_on_startup: True` オプションを追加
+
 ## [Unreleased] - 2026-01-30
 
 ### Added
