@@ -7,7 +7,7 @@ settings.yamlが存在しない場合のデフォルト設定を定義する。
 
 from typing import Any, Dict
 
-from .types import ComputeType, HotkeyMode, ModelSize
+from .types import HotkeyMode
 
 # ============================================
 # アプリケーションメタデータ
@@ -36,8 +36,6 @@ ANIMATION_DURATION_MS: int = 250    # アニメーション時間（高速化）
 # タイミング設定
 # ============================================
 CONFIG_CHECK_INTERVAL_SEC: int = 1          # 設定ファイル監視間隔（秒）
-DEFAULT_MEMORY_RELEASE_DELAY_SEC: int = 300  # VRAM解放までの待機時間（秒）
-
 # ============================================
 # デフォルト設定
 # ============================================
@@ -48,24 +46,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "vad_filter": True,
     "vad_min_silence_duration_ms": 500,
 
-    # ローカルバックエンド設定（共通）
-    "local_backend": {
-        "model_size": ModelSize.BASE.value,
-        "compute_type": ComputeType.FLOAT16.value,
-        "release_memory_delay": DEFAULT_MEMORY_RELEASE_DELAY_SEC,
-        "condition_on_previous_text": False,
-        "no_speech_threshold": 0.6,
-        "log_prob_threshold": -1.0,
-        "no_speech_prob_cutoff": 0.7,
-        "beam_size": 5,
-        "model_cache_dir": "",
-    },
-
     # ホットキー1 設定
     "hotkey1": {
         "hotkey": "<f2>",
         "hotkey_mode": HotkeyMode.TOGGLE.value,
-        "backend": "local",
+        "backend": "openai",
         "api_model": "",
         "api_prompt": "",
     },
@@ -74,7 +59,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "hotkey2": {
         "hotkey": "<f3>",
         "hotkey_mode": HotkeyMode.TOGGLE.value,
-        "backend": "local",
+        "backend": "groq",
         "api_model": "",
         "api_prompt": "",
     },
@@ -87,6 +72,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
     # 開発者モード - 出力を引用符で囲み、タイミングをファイルに記録
     "dev_mode": False,
+
+    # 起動時プリロード - 起動時にVADを事前ロードして最初の文字起こしを高速化
+    "preload_on_startup": True,
 }
 
 # ============================================

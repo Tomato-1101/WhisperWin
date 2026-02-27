@@ -90,7 +90,7 @@ class GroqTranscriber:
         if vad_filter:
             self._vad_filter = VadFilter(
                 min_silence_duration_ms=vad_min_silence_duration_ms,
-                use_cuda=True  # VADにはCUDAを使用
+                use_cuda=True  # 利用可能なハードウェアアクセラレーションを使用
             )
 
         # モデル名の検証
@@ -241,4 +241,3 @@ class GroqTranscriber:
         """
         if self.vad_enabled and self._vad_filter:
             self._vad_filter.preload_model()
-

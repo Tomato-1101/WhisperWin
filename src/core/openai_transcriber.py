@@ -90,7 +90,7 @@ class OpenAITranscriber:
         if vad_filter:
             self._vad_filter = VadFilter(
                 min_silence_duration_ms=vad_min_silence_duration_ms,
-                use_cuda=True  # VADにはCUDAを使用
+                use_cuda=True  # 利用可能なハードウェアアクセラレーションを使用
             )
 
         # タイミング情報

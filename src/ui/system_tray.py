@@ -5,13 +5,14 @@
 アプリケーション状態の表示とコンテキストメニューを提供する。
 """
 
-from typing import Union
+from typing import Optional, Union
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..config.types import AppState
+from ..platform import PlatformAdapter, get_platform_adapter
 
 
 class SystemTray(QSystemTrayIcon):
@@ -40,9 +41,14 @@ class SystemTray(QSystemTrayIcon):
     # アイコンサイズ（ピクセル）
     ICON_SIZE = 64
     
-    def __init__(self, parent=None) -> None:
+    def __init__(
+        self,
+        platform_adapter: Optional[PlatformAdapter] = None,
+        parent=None
+    ) -> None:
         """システムトレイアイコンを初期化する。"""
         super().__init__(parent)
+        self._platform = platform_adapter or get_platform_adapter()
         
         self._setup_icon()
         self._setup_menu()
@@ -81,8 +87,8 @@ class SystemTray(QSystemTrayIcon):
         Args:
             reason: アクティベーションの種類（クリック、ダブルクリック等）
         """
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            # シングルクリックで設定を開く
+        if self._platform.is_tray_open_reason(reason):
+            # macOSではダブルクリックが来る場合があるため両方を許可
             self.open_settings.emit()
 
     def set_status(self, status: Union[str, AppState]) -> None:

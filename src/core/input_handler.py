@@ -7,11 +7,13 @@
 """
 
 import time
+from typing import Optional
 
 import pyperclip
-from pynput.keyboard import Controller, Key
+from pynput.keyboard import Controller
 
 from ..utils.logger import get_logger
+from ..platform import PlatformAdapter, get_platform_adapter
 
 logger = get_logger(__name__)
 
@@ -27,9 +29,10 @@ class InputHandler:
     日本語や中国語などのマルチバイト文字を確実に入力できる。
     """
     
-    def __init__(self) -> None:
+    def __init__(self, platform_adapter: Optional[PlatformAdapter] = None) -> None:
         """キーボードコントローラーを初期化する。"""
         self._keyboard = Controller()
+        self._platform = platform_adapter or get_platform_adapter()
 
     def insert_text(self, text: str) -> bool:
         """
@@ -54,8 +57,9 @@ class InputHandler:
             # クリップボードの準備が整うまで少し待機
             time.sleep(PASTE_DELAY)
             
-            # Ctrl+V をシミュレート
-            with self._keyboard.pressed(Key.ctrl):
+            # OS別アダプタが定義する貼り付けショートカットを使用
+            paste_modifier = self._platform.paste_modifier
+            with self._keyboard.pressed(paste_modifier):
                 self._keyboard.press('v')
                 self._keyboard.release('v')
             

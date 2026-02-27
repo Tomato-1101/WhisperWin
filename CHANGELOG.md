@@ -2,6 +2,92 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-02-27
+
+### Added
+- **Cross-platform 抽象レイヤーを追加**
+  - `src/platform/` を新設し、OS差分を `core` から分離
+  - `PlatformAdapter` インターフェースと `get_platform_adapter()` ファクトリを追加
+  - `windows` / `macos` 向けアダプタ実装を追加
+
+- **運用ドキュメントの追加**
+  - `docs/CROSS_PLATFORM_UNIFICATION_PLAN.md`（統合計画）
+  - `docs/CROSS_PLATFORM_TEST_CHECKLIST.md`（検証チェックリスト）
+  - `run.sh`（macOS/Linux向け起動スクリプト）
+
+### Changed
+- **入力処理を platform 注入方式へ移行**
+  - `src/core/input_handler.py` の `sys.platform` 分岐を削除
+  - 貼り付け修飾キー（Cmd/Ctrl）を platform アダプタで制御
+
+- **UI のOS依存ロジックを分離**
+  - `src/ui/settings_window.py` のホットキー変換を platform 経由に変更
+  - `src/ui/system_tray.py` のアクティベーション判定を platform ポリシー化
+  - `src/ui/styles.py` のフォント指定を OS別フォールバック対応に変更
+
+- **アプリ初期化の依存注入を整理**
+  - `src/app.py` で platform アダプタを初期化し、
+    InputHandler / SettingsWindow / SystemTray / キー正規化に注入
+
+### Technical Details
+- **新規追加**
+  - `src/platform/base.py`
+  - `src/platform/factory.py`
+  - `src/platform/common/keymap.py`
+  - `src/platform/windows/adapter.py`
+  - `src/platform/macos/adapter.py`
+
+- **更新**
+  - `src/app.py`
+  - `src/core/input_handler.py`
+  - `src/ui/settings_window.py`
+  - `src/ui/system_tray.py`
+  - `src/ui/styles.py`
+  - `README.md`
+
+## [Unreleased] - 2026-02-03
+
+### Added
+- **起動時プリロード機能の実装**
+  - 起動時にVADモデルをバックグラウンドでプリロードし、最初の文字起こしを高速化
+  - `preload_on_startup` 設定オプションを追加（デフォルト: true）
+  - `app.py` に `_preload_models_async()` を追加
+
+### Fixed
+- **VADプリロードのタイミング改善**
+  - ホットキースロット初期化後にプリロードを実行するよう調整
+  - 起動順序を `setup_state -> start_background_threads -> preload` に整理
+
+### Technical Details
+- **src/app.py**
+  - `_preload_models_async()` を追加し、設定に応じて非同期プリロードを実行
+  - `_preload_vad_model()` を実行ロジック専用に整理
+- **src/config/constants.py**
+  - `DEFAULT_CONFIG` に `preload_on_startup: true` を追加
+
+## [Unreleased] - 2026-01-30
+
+### Added
+- **文字起こしキューイング機能の実装**
+  - 文字起こし処理中に新しい録音を開始しても、前タスクを破棄せずキューに追加
+  - すべての録音結果を順番に処理して入力
+  - `queue.Queue` を使用したスレッドセーフなタスク管理
+  - `TranscriptionTask` データクラスを追加
+
+### Changed
+- **app.py の文字起こし処理ロジックをキュー方式へ変更**
+  - `start_recording()` からキャンセル方式を削除
+  - `stop_and_transcribe()` でキュー投入
+  - `_start_queue_worker()`, `_queue_processor()`, `_process_transcription_task()` を追加
+  - `_handle_transcription_result()` は結果処理専用にし、idle遷移はワーカー管理へ移行
+
+### Technical Details
+- **src/config/types.py**
+  - `TranscriptionTask` データクラスを追加（audio_data, slot_id, timestamp）
+- **src/app.py**
+  - `_transcription_queue` / `_queue_worker_running` を追加
+  - キュー処理完了時に `idle` へ復帰する制御を追加
+
 ## [Unreleased] - 2026-01-15
 
 ### Added

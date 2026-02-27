@@ -39,7 +39,7 @@
 各ホットキーに以下を個別設定可能：
 - ショートカットキー（`<F2>`, `<Shift_R>`, `<Ctrl>+<Space>` 等）
 - トリガーモード（`hold`: 押している間録音 / `toggle`: 押して開始/停止）
-- バックエンド（`local`: GPU / `groq`: Groq API / `openai`: OpenAI API）
+- バックエンド（`groq`: Groq API / `openai`: OpenAI API）
 - APIモデルとプロンプト
 
 ### ⚡ その他の主要機能
@@ -64,7 +64,7 @@
 
 | バックエンド | GPU要件 | 備考 |
 |---|---|---|
-| **local** | CUDA対応NVIDIA GPU **必須** | ローカルGPUで処理 |
+| **VAD (ローカル)** | 任意（Apple SiliconはMPS優先） | 無音判定のみローカルで実行 |
 | **groq** | GPU **不要** | 無料（レート制限あり） |
 | **openai** | GPU **不要** | 有料 |
 
@@ -86,6 +86,7 @@ cd WhisperWin
 ```bash
 python -m venv venv
 .\venv\Scripts\Activate.ps1  # Windows PowerShell
+source venv/bin/activate     # macOS / Linux
 ```
 
 ### 3. 依存関係をインストール
@@ -94,11 +95,13 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-### 4. （ローカルバックエンド使用時のみ）PyTorch with CUDA
+### 4. （任意）PyTorch最適化版
 
 ```bash
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
+
+> macOS Apple Silicon では MPS が利用可能な環境で自動的に優先されます（VAD処理）。
 
 ### 5. ffmpegのインストール確認
 
@@ -112,13 +115,14 @@ ffmpeg -version
 
 ### 起動方法
 
-#### 方法1: バッチファイル（推奨）
+#### 方法1: OS別ランチャー
 
 ```bash
-run.bat
+run.bat   # Windows
+./run.sh  # macOS / Linux
 ```
 
-ダブルクリックするだけでアプリが起動します。
+ダブルクリックまたはターミナル実行でアプリが起動します。
 
 #### 方法2: Pythonスクリプト
 
@@ -167,7 +171,7 @@ WhisperWinは**2つの独立したホットキー**を設定でき、各ホッ�
 
 | バックエンド | GPU | 速度 | 精度 | 料金 | 用途 |
 |---|:---:|---|---|---|---|
-| **local** | ✅ | 中 | 高 | 無料 | GPUがあればコスパ最高 |
+| **VAD (ローカル判定)** | ✅ | 高速 | - | 無料 | 無音時のAPI呼び出しスキップ |
 | **groq** | ❌ | **超高速** | 高 | 無料（制限あり） | 日常使い・お試し |
 | **openai** | ❌ | 高速 | **最高** | 有料 | 重要な文書・高精度が必要 |
 
@@ -186,23 +190,17 @@ WhisperWinは**2つの独立したホットキー**を設定でき、各ホッ�
 **Hotkey 1 / Hotkey 2 それぞれで設定:**
 - **Shortcut**: ホットキー（例: `<f2>`, `<shift_r>`, `<ctrl>+<space>`）
 - **Mode**: `hold` (押している間録音) / `toggle` (押して開始/停止)
-- **Backend**: `local` / `groq` / `openai`
+- **Backend**: `groq` / `openai`
 - **Model**: APIバックエンドの場合に選択
 - **Prompt**: APIバックエンドで使用するヒントテキスト（オプション）
 
 **共通設定:**
 - **Language**: 言語コード（`ja`, `en` 等）
 
-#### 📍 Modelページ
-
-ローカルGPU設定（両方のホットキーで共有）：
-- **Model Size**: `tiny`, `base`, `small`, `medium`, `large`, `large-v3`
-- **Compute Type**: `float16`, `int8_float16`, `int8`
-
 #### 📍 Advancedページ
 
 - **VAD Filter**: 音声区間検出の有効/無効
-- **Release Memory Delay**: VRAM解放までの待機時間（秒）
+- **VAD Min Silence**: 無音判定に使う最小継続時間（ms）
 
 ### 設定ファイル（上級者向け）
 
@@ -213,18 +211,6 @@ WhisperWinは**2つの独立したホットキー**を設定でき、各ホッ�
 language: ja
 vad_filter: true
 vad_min_silence_duration_ms: 500
-
-# ローカルバックエンド設定（共通）
-local_backend:
-  model_size: large-v3
-  compute_type: float16
-  release_memory_delay: 300
-  condition_on_previous_text: false
-  no_speech_threshold: 0.6
-  log_prob_threshold: -1.0
-  no_speech_prob_cutoff: 0.7
-  beam_size: 5
-  model_cache_dir: D:/whisper_cache
 
 # ホットキー1 設定
 hotkey1:
@@ -342,8 +328,10 @@ local_backend:
 **解決策**: `model_cache_dir` を明示的に指定
 
 ```yaml
-local_backend:
-  model_cache_dir: D:/whisper_cache
+hotkey1:
+  backend: openai
+hotkey2:
+  backend: groq
 ```
 
 ---
@@ -380,13 +368,18 @@ WhisperWin/
 │   │   ├── types.py              # 型定義（HotkeySlotConfig等）
 │   │   ├── constants.py          # 定数（DEFAULT_CONFIG）
 │   │   └── config_manager.py     # 設定読み込み・マイグレーション
-│   ├── core/                     # コアロジック
+│   ├── core/                     # 共通コアロジック
 │   │   ├── audio_recorder.py     # 音声録音
-│   │   ├── transcriber.py        # ローカルGPU文字起こし
 │   │   ├── groq_transcriber.py   # Groq API文字起こし
 │   │   ├── openai_transcriber.py # OpenAI API文字起こし
 │   │   ├── vad.py                # VADフィルタ
 │   │   └── input_handler.py      # テキスト入力
+│   ├── platform/                 # OS別実装レイヤー
+│   │   ├── base.py               # 抽象インターフェース
+│   │   ├── factory.py            # OS選択ファクトリ
+│   │   ├── macos/                # macOS実装
+│   │   ├── windows/              # Windows実装
+│   │   └── common/               # 共通キー変換
 │   ├── ui/                       # UI
 │   │   ├── overlay.py            # Dynamic Islandオーバーレイ
 │   │   ├── settings_window.py    # 設定ウィンドウ（2ホットキー対応）
@@ -396,6 +389,7 @@ WhisperWin/
 │       └── logger.py             # ロギング
 ├── run.py                        # 起動スクリプト
 ├── run.bat                       # ワンクリック起動
+├── run.sh                        # Unix系ワンクリック起動
 ├── settings.yaml                 # 設定ファイル
 ├── CHANGELOG.md                  # 変更履歴
 ├── CLAUDE.md                     # AI開発者向けガイド
@@ -411,10 +405,10 @@ WhisperWin/
 ### ビルド
 
 ```bash
-pyinstaller SuperWhisperLike.spec --clean --noconfirm
+pyinstaller WhisperWin.spec --clean --noconfirm
 ```
 
-実行ファイルは `dist/SuperWhisperLike/SuperWhisperLike.exe` に生成されます。
+実行ファイルは `dist/WhisperWin/WhisperWin`（Windowsでは `.exe`）に生成されます。
 
 ### 変更履歴
 

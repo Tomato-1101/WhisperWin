@@ -16,6 +16,7 @@ from ..utils.logger import get_logger
 from .constants import DEFAULT_CONFIG, SETTINGS_FILE_NAME
 
 logger = get_logger(__name__)
+API_BACKENDS = {"groq", "openai"}
 
 
 def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,38 +98,87 @@ class ConfigManager:
             # 旧形式を検出
             logger.info("旧設定フォーマットを検出。新形式にマイグレーション中...")
 
+            backend = self._normalize_backend(config.pop("transcription_backend", "openai"))
+            model_key = "groq_model" if backend == "groq" else "openai_model"
+            prompt_key = "groq_prompt" if backend == "groq" else "openai_prompt"
+
             # 旧ホットキー設定をhotkey1に移行
             config["hotkey1"] = {
                 "hotkey": config.pop("hotkey", "<f2>"),
                 "hotkey_mode": config.pop("hotkey_mode", "toggle"),
-                "backend": config.pop("transcription_backend", "local"),
-                "api_model": config.get("groq_model") or config.get("openai_model", ""),
-                "api_prompt": config.get("groq_prompt") or config.get("openai_prompt", ""),
+                "backend": backend,
+                "api_model": config.get(model_key, ""),
+                "api_prompt": config.get(prompt_key, ""),
             }
 
             # hotkey2にデフォルト値
             config["hotkey2"] = DEFAULT_CONFIG["hotkey2"].copy()
 
-            # ローカルバックエンド設定を構造化
-            config["local_backend"] = {
-                "model_size": config.pop("model_size", DEFAULT_CONFIG["local_backend"]["model_size"]),
-                "compute_type": config.pop("compute_type", DEFAULT_CONFIG["local_backend"]["compute_type"]),
-                "release_memory_delay": config.pop("release_memory_delay", DEFAULT_CONFIG["local_backend"]["release_memory_delay"]),
-                "condition_on_previous_text": config.pop("condition_on_previous_text", DEFAULT_CONFIG["local_backend"]["condition_on_previous_text"]),
-                "no_speech_threshold": config.pop("no_speech_threshold", DEFAULT_CONFIG["local_backend"]["no_speech_threshold"]),
-                "log_prob_threshold": config.pop("log_prob_threshold", DEFAULT_CONFIG["local_backend"]["log_prob_threshold"]),
-                "no_speech_prob_cutoff": config.pop("no_speech_prob_cutoff", DEFAULT_CONFIG["local_backend"]["no_speech_prob_cutoff"]),
-                "beam_size": config.pop("beam_size", DEFAULT_CONFIG["local_backend"]["beam_size"]),
-                "model_cache_dir": config.pop("model_cache_dir", DEFAULT_CONFIG["local_backend"]["model_cache_dir"]),
-            }
-
             # 旧キーを削除
-            for key in ["groq_model", "openai_model", "groq_prompt", "openai_prompt", "transcription_backend"]:
+            for key in [
+                "groq_model",
+                "openai_model",
+                "groq_prompt",
+                "openai_prompt",
+                "transcription_backend",
+                "model_size",
+                "compute_type",
+                "release_memory_delay",
+                "condition_on_previous_text",
+                "no_speech_threshold",
+                "log_prob_threshold",
+                "no_speech_prob_cutoff",
+                "beam_size",
+                "model_cache_dir",
+                "local_backend",
+            ]:
                 config.pop(key, None)
 
             logger.info("設定マイグレーション完了")
 
+        # スロット設定が存在する場合は、API専用バックエンドに正規化
+        defaults = DEFAULT_CONFIG.get("default_api_models", {})
+        for slot_id in [1, 2]:
+            slot_key = f"hotkey{slot_id}"
+            slot = config.get(slot_key)
+            if not isinstance(slot, dict):
+                continue
+
+            backend = self._normalize_backend(slot.get("backend", "openai"))
+            slot["backend"] = backend
+
+            api_model = str(slot.get("api_model", "") or "").strip()
+            if not api_model:
+                slot["api_model"] = defaults.get(backend, "")
+
+        # 廃止したローカル推論設定キーを削除
+        for key in [
+            "local_backend",
+            "model_size",
+            "compute_type",
+            "release_memory_delay",
+            "condition_on_previous_text",
+            "no_speech_threshold",
+            "log_prob_threshold",
+            "no_speech_prob_cutoff",
+            "beam_size",
+            "model_cache_dir",
+        ]:
+            config.pop(key, None)
+
         return config
+
+    @staticmethod
+    def _normalize_backend(backend: Any) -> str:
+        """
+        バックエンド値をAPI専用の有効値に正規化する。
+
+        `local` や不正値は `openai` にフォールバックする。
+        """
+        backend_str = str(backend).lower()
+        if backend_str in API_BACKENDS:
+            return backend_str
+        return "openai"
 
     def _load_config(self) -> Dict[str, Any]:
         """

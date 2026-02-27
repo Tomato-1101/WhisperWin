@@ -1,11 +1,11 @@
 """
 UIスタイル・テーマ定義モジュール
 
-macOS風のUIテーマ（カラー、フォント、スタイルシート）を定義する。
+クロスプラットフォーム向けのUIテーマ（カラー、フォント、スタイルシート）を定義する。
 ダークモード/ライトモードの切り替えに対応。
 """
 
-from PySide6.QtGui import QColor, QFont
+from ..platform import get_platform_adapter
 
 
 class MacTheme:
@@ -16,8 +16,8 @@ class MacTheme:
     Qt全体に適用するスタイルシートを提供する。
     """
     
-    # 共通フォント設定
-    FONT_FAMILY = "Segoe UI"     # Windows環境向けフォント
+    # 共通フォント設定（OSごとに適切なフォールバックを使用）
+    FONT_FAMILY = get_platform_adapter().font_css_stack
     FONT_SIZE_NORMAL = 13        # 標準フォントサイズ
 
     class Colors:
@@ -88,7 +88,7 @@ class MacTheme:
         return f"""
         /* 基本ウィジェット */
         QWidget {{
-            font-family: '{MacTheme.FONT_FAMILY}';
+            font-family: {MacTheme.FONT_FAMILY};
             font-size: {MacTheme.FONT_SIZE_NORMAL}px;
             color: {c.TEXT};
             background-color: {c.BACKGROUND};
@@ -220,7 +220,7 @@ class MacTheme:
             border: 1px solid {c.BORDER};
             border-radius: 6px;
             padding: 8px;
-            font-family: '{MacTheme.FONT_FAMILY}';
+            font-family: {MacTheme.FONT_FAMILY};
             font-size: {MacTheme.FONT_SIZE_NORMAL}px;
             selection-background-color: {c.ACCENT};
         }}
