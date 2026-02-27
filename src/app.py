@@ -92,7 +92,9 @@ class SuperWhisperApp(QObject):
 
     def _setup_core_components(self) -> None:
         """コアビジネスロジックコンポーネントを初期化する。"""
-        self._recorder = AudioRecorder()
+        initial_input_device = self._config.get("audio_input_device", "default")
+        self._recorder = AudioRecorder(input_device=initial_input_device)
+        self._current_input_device = AudioRecorder.normalize_device_setting(initial_input_device)
 
         # 音声レベルコールバックを設定（波形アニメーション用）
         self._recorder.set_level_callback(self._on_audio_level)
@@ -722,6 +724,16 @@ class SuperWhisperApp(QObject):
 
     def _apply_config_changes(self) -> None:
         """設定変更を適用する。"""
+        # 入力デバイス設定を更新
+        next_input_device = AudioRecorder.normalize_device_setting(
+            self._config.get("audio_input_device", "default")
+        )
+        if next_input_device != self._current_input_device:
+            self._recorder.set_input_device(next_input_device)
+            self._current_input_device = next_input_device
+            device_label = "default" if next_input_device is None else str(next_input_device)
+            logger.info(f"入力デバイス設定を更新: {device_label}")
+
         # ホットキースロット設定を更新
         slots_changed = False
         for slot_id in [1, 2]:

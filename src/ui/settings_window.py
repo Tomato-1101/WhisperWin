@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import ConfigManager, HotkeyMode, TranscriptionBackend
+from ..core.audio_recorder import AudioRecorder
 from ..platform import PlatformAdapter, get_platform_adapter
 from .styles import MacTheme
 
@@ -514,7 +515,55 @@ class SettingsWindow(QWidget):
         self._vad_silence_spin.setSuffix(" ms")
         layout.addRow("VAD Min Silence:", self._vad_silence_spin)
 
+        # 入力デバイス
+        self._input_device_combo = QComboBox()
+        self._input_device_combo.setMinimumWidth(320)
+
+        refresh_button = QPushButton("Refresh")
+        refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_button.clicked.connect(self._populate_input_devices)
+
+        device_row = QWidget()
+        device_row_layout = QHBoxLayout(device_row)
+        device_row_layout.setContentsMargins(0, 0, 0, 0)
+        device_row_layout.setSpacing(8)
+        device_row_layout.addWidget(self._input_device_combo)
+        device_row_layout.addWidget(refresh_button)
+
+        layout.addRow("Input Device:", device_row)
+
         return page
+
+    def _populate_input_devices(self) -> None:
+        """入力デバイス一覧をコンボボックスへ読み込む。"""
+        current_value = "default"
+        if hasattr(self, "_input_device_combo") and self._input_device_combo.count() > 0:
+            current_data = self._input_device_combo.currentData()
+            if current_data is not None:
+                current_value = current_data
+
+        self._input_device_combo.clear()
+        self._input_device_combo.addItem("System Default", "default")
+
+        devices = AudioRecorder.list_input_devices()
+        for device in devices:
+            device_id = int(device["id"])
+            label = f"{device_id}: {device['label']}"
+            self._input_device_combo.addItem(label, device_id)
+
+        self._set_input_device_selection(current_value)
+
+    def _set_input_device_selection(self, value) -> None:
+        """入力デバイス選択を設定値に合わせる。"""
+        normalized = AudioRecorder.normalize_device_setting(value)
+        target_value = "default" if normalized is None else normalized
+
+        for index in range(self._input_device_combo.count()):
+            if self._input_device_combo.itemData(index) == target_value:
+                self._input_device_combo.setCurrentIndex(index)
+                return
+
+        self._input_device_combo.setCurrentIndex(0)
 
     def _load_current_settings(self) -> None:
         """設定ファイルから現在の値をUIに読み込む。"""
@@ -546,6 +595,8 @@ class SettingsWindow(QWidget):
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
         self._vad_silence_spin.setValue(config.get("vad_min_silence_duration_ms", 500))
+        self._populate_input_devices()
+        self._set_input_device_selection(config.get("audio_input_device", "default"))
 
         # APIモデルとバックエンド表示状態を初期化
         for slot_id in [1, 2]:
@@ -614,12 +665,16 @@ class SettingsWindow(QWidget):
         # 既存のdev_mode, llm_postprocess設定を保持
         existing_dev_mode = self._config_manager.get("dev_mode", False)
         existing_llm_postprocess = self._config_manager.get("llm_postprocess", {})
+        selected_input_device = self._input_device_combo.currentData()
+        if selected_input_device is None:
+            selected_input_device = "default"
 
         new_config = {
             # グローバル設定
             "language": self._lang_input.text(),
             "vad_filter": self._vad_check.isChecked(),
             "vad_min_silence_duration_ms": self._vad_silence_spin.value(),
+            "audio_input_device": selected_input_device,
 
             # ホットキー1 設定
             "hotkey1": {

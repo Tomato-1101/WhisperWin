@@ -10,6 +10,11 @@ WhisperWinの変更履歴を記録するファイルです。
   - `PlatformAdapter` インターフェースと `get_platform_adapter()` ファクトリを追加
   - `windows` / `macos` 向けアダプタ実装を追加
 
+- **入力デバイス選択機能を追加**
+  - Settings の Advanced ページでマイク入力デバイスを選択可能
+  - `audio_input_device` 設定キーを追加（`default` / デバイスID）
+  - 録音開始時に指定デバイスを使用し、失敗時は自動でデフォルトへフォールバック
+
 - **運用ドキュメントの追加**
   - `docs/CROSS_PLATFORM_UNIFICATION_PLAN.md`（統合計画）
   - `docs/CROSS_PLATFORM_TEST_CHECKLIST.md`（検証チェックリスト）
@@ -19,6 +24,9 @@ WhisperWinの変更履歴を記録するファイルです。
 - **入力処理を platform 注入方式へ移行**
   - `src/core/input_handler.py` の `sys.platform` 分岐を削除
   - 貼り付け修飾キー（Cmd/Ctrl）を platform アダプタで制御
+
+- **録音設定の動的反映を強化**
+  - `settings.yaml` の変更監視で入力デバイス設定の更新を即時適用
 
 - **UI のOS依存ロジックを分離**
   - `src/ui/settings_window.py` のホットキー変換を platform 経由に変更

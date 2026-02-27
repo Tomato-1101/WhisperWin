@@ -45,6 +45,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "language": "ja",
     "vad_filter": True,
     "vad_min_silence_duration_ms": 500,
+    "audio_input_device": "default",
 
     # ホットキー1 設定
     "hotkey1": {

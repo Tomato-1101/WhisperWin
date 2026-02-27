@@ -6,7 +6,7 @@ sounddeviceライブラリを使用してマイクから音声を録音する機
 """
 
 import queue
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -31,12 +31,17 @@ class AudioRecorder:
         is_recording: 録音中かどうか
     """
     
-    def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
+    def __init__(
+        self,
+        sample_rate: int = SAMPLE_RATE,
+        input_device: Optional[Union[int, str]] = "default"
+    ) -> None:
         """
         AudioRecorderを初期化する。
         
         Args:
             sample_rate: サンプリングレート（デフォルト: 16000Hz）
+            input_device: 入力デバイス（"default" / デバイスID / デバイス名）
         """
         self.sample_rate = sample_rate
         self._queue: queue.Queue = queue.Queue()  # 録音データを一時保存するキュー
@@ -44,6 +49,85 @@ class AudioRecorder:
         self._stream: Optional[sd.InputStream] = None  # 音声入力ストリーム
         self._level_callback: Optional[callable] = None  # 音声レベルコールバック
         self._level_threshold = 0.02  # 音声検出のしきい値
+        self._input_device: Optional[Union[int, str]] = None
+        self.set_input_device(input_device)
+
+    @staticmethod
+    def normalize_device_setting(device: Any) -> Optional[Union[int, str]]:
+        """
+        設定値をsounddeviceで扱える入力デバイス形式に正規化する。
+
+        Returns:
+            None: システムデフォルトを使用
+            int/str: sounddeviceのdevice引数として使用
+        """
+        if device is None:
+            return None
+
+        if isinstance(device, str):
+            value = device.strip()
+            if not value or value.lower() == "default":
+                return None
+            if value.isdigit():
+                return int(value)
+            return value
+
+        if isinstance(device, (int, np.integer)):
+            return int(device)
+
+        return None
+
+    @staticmethod
+    def list_input_devices() -> List[Dict[str, Any]]:
+        """
+        利用可能な入力デバイス一覧を取得する。
+        """
+        try:
+            devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+        except Exception as e:
+            logger.warning(f"入力デバイス一覧の取得に失敗: {e}")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for index, device in enumerate(devices):
+            max_input_channels = int(device.get("max_input_channels", 0))
+            if max_input_channels <= 0:
+                continue
+
+            name = str(device.get("name", f"Input {index}")).strip() or f"Input {index}"
+            hostapi_name = ""
+            hostapi_index = device.get("hostapi")
+            if isinstance(hostapi_index, int) and 0 <= hostapi_index < len(hostapis):
+                hostapi_name = str(hostapis[hostapi_index].get("name", "")).strip()
+
+            label = f"{name} ({hostapi_name})" if hostapi_name else name
+            results.append({
+                "id": index,
+                "name": name,
+                "label": label,
+                "max_input_channels": max_input_channels,
+            })
+
+        return results
+
+    def set_input_device(self, device: Any) -> None:
+        """
+        使用する入力デバイス設定を更新する。
+        """
+        normalized = self.normalize_device_setting(device)
+        self._input_device = normalized
+
+        device_label = "default" if normalized is None else str(normalized)
+        logger.info(f"入力デバイス設定: {device_label}")
+
+        if self._recording:
+            logger.info("録音中のため、入力デバイス変更は次回録音開始時に適用されます。")
+
+    @property
+    def input_device(self) -> Optional[Union[int, str]]:
+        """現在の入力デバイス設定を返す。"""
+        return self._input_device
 
     def set_level_callback(self, callback: callable) -> None:
         """
@@ -109,17 +193,34 @@ class AudioRecorder:
         try:
             # キューをクリア
             self._clear_queue()
-            
+
+            stream_kwargs = {
+                "samplerate": self.sample_rate,
+                "channels": AUDIO_CHANNELS,
+                "dtype": AUDIO_DTYPE,
+                "callback": self._audio_callback,
+            }
+            if self._input_device is not None:
+                stream_kwargs["device"] = self._input_device
+
             # 音声入力ストリームを作成・開始
-            self._stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=AUDIO_CHANNELS,
-                dtype=AUDIO_DTYPE,
-                callback=self._audio_callback
-            )
+            try:
+                self._stream = sd.InputStream(**stream_kwargs)
+            except Exception as e:
+                if self._input_device is None:
+                    raise
+
+                logger.warning(
+                    f"指定入力デバイス({self._input_device})で録音開始に失敗。"
+                    f"デフォルトデバイスへフォールバックします: {e}"
+                )
+                stream_kwargs.pop("device", None)
+                self._stream = sd.InputStream(**stream_kwargs)
+
             self._stream.start()
             self._recording = True
-            logger.info("録音開始...")
+            device_label = "default" if self._input_device is None else str(self._input_device)
+            logger.info(f"録音開始... (input_device={device_label})")
             return True
             
         except Exception as e:

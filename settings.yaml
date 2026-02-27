@@ -1,3 +1,4 @@
+audio_input_device: 3
 dark_mode: false
 default_api_models:
   groq: whisper-large-v3-turbo
