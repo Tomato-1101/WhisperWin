@@ -54,10 +54,12 @@ class TranscriptionTask:
         audio_data: 音声データ（NumPy配列）
         slot_id: 使用するホットキースロットID
         timestamp: タスク作成時刻
+        auto_enter: 文字起こし後にEnterキーを自動入力するか
     """
     audio_data: Any
     slot_id: int
     timestamp: float
+    auto_enter: bool = False
 
 
 @dataclass

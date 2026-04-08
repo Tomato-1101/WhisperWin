@@ -10,7 +10,7 @@ import time
 from typing import Optional
 
 import pyperclip
-from pynput.keyboard import Controller
+from pynput.keyboard import Controller, Key
 
 from ..utils.logger import get_logger
 from ..platform import PlatformAdapter, get_platform_adapter
@@ -68,6 +68,24 @@ class InputHandler:
             
         except Exception as e:
             logger.error(f"テキスト挿入エラー: {e}")
+            return False
+
+    def press_enter(self) -> bool:
+        """
+        Enterキーを1回押す。
+
+        チャットアプリ等でメッセージ送信に使用。
+
+        Returns:
+            成功した場合True、失敗した場合False
+        """
+        try:
+            self._keyboard.press(Key.enter)
+            self._keyboard.release(Key.enter)
+            logger.debug("Enterキーを送信しました")
+            return True
+        except Exception as e:
+            logger.error(f"Enterキー送信エラー: {e}")
             return False
 
     def type_text(self, text: str) -> bool:

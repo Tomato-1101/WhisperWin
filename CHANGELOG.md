@@ -2,6 +2,27 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-04-08
+
+### Added
+- **強制リセット機能**
+  - トレイアイコンの右クリックメニューに「Force Reset」を追加
+  - 録音中・文字起こし中の全処理を強制停止してidle状態に復帰
+  - 世代カウンタにより実行中のAPI呼び出し結果も安全に破棄
+
+- **ダブルタップ + ホールドで自動Enterキー送信**
+  - ホールドモードでホットキーをダブルタップ（2回目を長押し）すると、文字起こし結果入力後にEnterキーを自動送信
+  - チャットアプリでの音声入力→送信をワンアクションで完結
+  - ダブルタップ判定ウィンドウ: 400ms
+
+### Technical Details
+- **types.py**: `TranscriptionTask` に `auto_enter` フィールドを追加
+- **input_handler.py**: `press_enter()` メソッドを追加（pynput Key.enter使用）
+- **system_tray.py**: `force_reset` シグナルとメニュー項目を追加
+- **app.py**: `force_reset()` メソッド、世代カウンタ `_reset_generation`、ダブルタップ検出ロジック、`text_ready` シグナルを `Signal(str, bool)` に拡張
+
+---
+
 ## [Unreleased] - 2026-02-27
 
 ### Added

@@ -29,6 +29,7 @@ class SystemTray(QSystemTrayIcon):
     
     # メニューアクション用シグナル
     open_settings = Signal()
+    force_reset = Signal()
     quit_app = Signal()
     
     # 状態別アイコンカラー
@@ -67,9 +68,15 @@ class SystemTray(QSystemTrayIcon):
         # 設定メニュー項目
         settings_action = self._menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings.emit)
-        
+
         self._menu.addSeparator()
-        
+
+        # 強制リセットメニュー項目
+        reset_action = self._menu.addAction("Force Reset")
+        reset_action.triggered.connect(self.force_reset.emit)
+
+        self._menu.addSeparator()
+
         # 終了メニュー項目
         quit_action = self._menu.addAction("Quit")
         quit_action.triggered.connect(self.quit_app.emit)

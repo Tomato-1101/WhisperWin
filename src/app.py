@@ -67,7 +67,7 @@ class SuperWhisperApp(QObject):
     
     # UIスレッドセーフな更新用シグナル
     status_changed = Signal(str)
-    text_ready = Signal(str)
+    text_ready = Signal(str, bool)  # (text, auto_enter)
     
     def __init__(self) -> None:
         """アプリケーションを初期化する。"""
@@ -241,6 +241,7 @@ class SuperWhisperApp(QObject):
     def _setup_signals(self) -> None:
         """シグナルをスロットに接続する。"""
         self._tray.open_settings.connect(self._open_settings)
+        self._tray.force_reset.connect(self.force_reset)
         self._tray.quit_app.connect(self._quit_app)
         self.status_changed.connect(self._update_ui_status)
         self.text_ready.connect(self._handle_transcription_result)
@@ -254,6 +255,15 @@ class SuperWhisperApp(QObject):
         # 文字起こしキュー関連
         self._transcription_queue: queue.Queue = queue.Queue()
         self._queue_worker_running = False
+
+        # 強制リセット用の世代カウンタ（リセット後の古い結果を破棄するため）
+        self._reset_generation: int = 0
+
+        # ダブルタップ検出用の状態
+        self._last_hotkey_release_time: float = 0.0
+        self._last_hotkey_release_slot: Optional[int] = None
+        self._auto_enter_active: bool = False
+        self._double_tap_window_sec: float = 0.4  # 400msのダブルタップ判定ウィンドウ
 
         # ホットキースロットの初期化
         self._hotkey_slots: Dict[int, HotkeySlot] = {}
@@ -334,17 +344,49 @@ class SuperWhisperApp(QObject):
         self._monitoring = False
         QApplication.quit()
 
+    def force_reset(self) -> None:
+        """
+        全処理を強制停止してidle状態に戻す。
+
+        録音中・文字起こし中の処理をすべて中断し、
+        キューをクリアしてアプリケーションをクリーン状態に戻す。
+        """
+        logger.info("強制リセットを実行します")
+
+        # 録音中なら停止（音声データは破棄）
+        if self._is_recording:
+            self._is_recording = False
+            self._recorder.stop()
+
+        # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
+        self._reset_generation += 1
+
+        # キューをクリア（未処理タスクを破棄）
+        with self._transcription_queue.mutex:
+            self._transcription_queue.queue.clear()
+
+        # 状態フラグをリセット
+        self._active_slot = None
+        self._is_transcribing = False
+        self._queue_worker_running = False
+        self._auto_enter_active = False
+
+        # UIをidle状態に戻す
+        self.status_changed.emit("idle")
+        logger.info("強制リセット完了 - idle状態に戻りました")
+
     def _update_ui_status(self, status: str) -> None:
         """UIコンポーネントの状態を更新する。"""
         self._overlay.set_state(status)
         self._tray.set_status(status)
 
-    def _handle_transcription_result(self, text: str) -> None:
+    def _handle_transcription_result(self, text: str, auto_enter: bool = False) -> None:
         """
         文字起こし結果を処理する。
-        
+
         Args:
             text: 文字起こしテキスト
+            auto_enter: Trueの場合、テキスト挿入後にEnterキーを自動送信
         """
         if not text:
             logger.info("テキストが検出されませんでした。")
@@ -359,11 +401,17 @@ class SuperWhisperApp(QObject):
         if dev_mode:
             text = f'"{text}"'
 
-        logger.info(f"結果: {text}")
-        
+        logger.info(f"結果: {text}" + (" [auto_enter]" if auto_enter else ""))
+
         insert_start = time.perf_counter()
         self._input_handler.insert_text(text)
         insert_time = (time.perf_counter() - insert_start) * 1000
+
+        # ダブルタップモード：テキスト挿入後にEnterキーを自動送信
+        if auto_enter:
+            time.sleep(0.05)  # ペースト完了を待機
+            self._input_handler.press_enter()
+            logger.info("auto_enter: Enterキーを送信しました")
 
         # 開発者モード：タイミングをファイルに記録
         if dev_mode:
@@ -446,6 +494,10 @@ class SuperWhisperApp(QObject):
         logger.info("録音停止")
         self._is_recording = False
 
+        # ダブルタップのauto_enterフラグを取得してリセット
+        auto_enter = self._auto_enter_active
+        self._auto_enter_active = False
+
         audio_data = self._recorder.stop()
 
         # 音声データが空の場合
@@ -463,6 +515,7 @@ class SuperWhisperApp(QObject):
             audio_data=audio_data,
             slot_id=self._active_slot,
             timestamp=time.perf_counter(),
+            auto_enter=auto_enter,
         )
         self._transcription_queue.put(task)
 
@@ -481,6 +534,7 @@ class SuperWhisperApp(QObject):
 
     def _queue_processor(self) -> None:
         """キューからタスクを順番に処理するワーカー。"""
+        generation = self._reset_generation  # 開始時の世代を記録
         try:
             while True:
                 try:
@@ -493,7 +547,10 @@ class SuperWhisperApp(QObject):
         finally:
             self._queue_worker_running = False
             self._is_transcribing = False
-            if self._transcription_queue.empty() and not self._is_recording:
+            # force_resetで世代が変わっていたらidle emitをスキップ（既にリセット済み）
+            if (self._reset_generation == generation
+                    and self._transcription_queue.empty()
+                    and not self._is_recording):
                 self.status_changed.emit("idle")
 
     def _process_transcription_task(self, task: TranscriptionTask) -> None:
@@ -503,16 +560,22 @@ class SuperWhisperApp(QObject):
         Args:
             task: 処理する文字起こしタスク
         """
+        generation = self._reset_generation  # API呼び出し前の世代を記録
         try:
             slot = self._hotkey_slots[task.slot_id]
             transcriber = self._get_transcriber_for_slot(slot)
             if transcriber is None:
-                self.text_ready.emit(f"Error: {slot.backend} transcriber is unavailable")
+                self.text_ready.emit(f"Error: {slot.backend} transcriber is unavailable", False)
                 return
 
             transcribe_start = time.perf_counter()
             text = transcriber.transcribe(task.audio_data)
             transcribe_time = (time.perf_counter() - transcribe_start) * 1000
+
+            # force_resetが発生していたら結果を破棄
+            if self._reset_generation != generation:
+                logger.info("強制リセットにより文字起こし結果を破棄しました")
+                return
 
             # 開発者モード用に保存
             self._last_whisper_time = transcribe_time
@@ -520,10 +583,12 @@ class SuperWhisperApp(QObject):
             self._last_whisper_api_time = getattr(transcriber, 'last_api_time', 0)
             self._last_total_time = (time.perf_counter() - task.timestamp) * 1000
 
-            self.text_ready.emit(text)
+            self.text_ready.emit(text, task.auto_enter)
         except Exception as e:
+            if self._reset_generation != generation:
+                return
             logger.error(f"文字起こしエラー: {e}")
-            self.text_ready.emit("")
+            self.text_ready.emit("", False)
 
     # -------------------------------------------------------------------------
     # ホットキー処理
@@ -571,6 +636,9 @@ class SuperWhisperApp(QObject):
         """
         キー押下イベントを処理する。
 
+        ダブルタップ検出：前回のリリースから短時間内に同じスロットの
+        ホットキーが押された場合、auto_enterモードで録音を開始する。
+
         Args:
             key: 押されたキー
         """
@@ -582,6 +650,14 @@ class SuperWhisperApp(QObject):
                 if not self._is_recording:
                     for slot_id, slot in self._hotkey_slots.items():
                         if self._check_hotkey_match_for_slot(slot):
+                            # ダブルタップ検出：同じスロットで短時間内の再押下
+                            now = time.perf_counter()
+                            if (self._last_hotkey_release_slot == slot_id
+                                    and (now - self._last_hotkey_release_time) < self._double_tap_window_sec):
+                                self._auto_enter_active = True
+                                logger.info(f"ダブルタップ検出 (スロット{slot_id}) - auto_enterモード")
+                            else:
+                                self._auto_enter_active = False
                             self.start_recording(slot_id)
                             break
         except Exception:
@@ -590,6 +666,8 @@ class SuperWhisperApp(QObject):
     def _handle_key_release(self, key: Any) -> None:
         """
         キー解放イベントを処理する。
+
+        ダブルタップ検出のためにリリース時刻とスロットを記録する。
 
         Args:
             key: 解放されたキー
@@ -602,6 +680,9 @@ class SuperWhisperApp(QObject):
                 if self._is_recording and self._active_slot is not None:
                     active_slot = self._hotkey_slots[self._active_slot]
                     if self._is_hotkey_key_released_for_slot(key_str, active_slot):
+                        # ダブルタップ検出用にリリース時刻とスロットを記録
+                        self._last_hotkey_release_time = time.perf_counter()
+                        self._last_hotkey_release_slot = self._active_slot
                         self.stop_and_transcribe()
         except Exception:
             pass
