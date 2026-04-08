@@ -480,7 +480,10 @@ class SuperWhisperApp(QObject):
             return
 
         self._is_recording = True
-        self.status_changed.emit("recording")
+        if self._auto_enter_active:
+            self.status_changed.emit("recording_auto_enter")
+        else:
+            self.status_changed.emit("recording")
 
         # 使用するTranscriberのモデルをプリロード
         threading.Thread(target=transcriber.load_model, daemon=True).start()

@@ -28,9 +28,10 @@ class AppState(str, Enum):
     
     UIの表示やシステムトレイアイコンの色に使用される。
     """
-    IDLE = "idle"                  # 待機中
-    RECORDING = "recording"        # 録音中
-    TRANSCRIBING = "transcribing"  # 文字起こし中
+    IDLE = "idle"                                    # 待機中
+    RECORDING = "recording"                          # 録音中
+    RECORDING_AUTO_ENTER = "recording_auto_enter"    # 録音中（auto_enterモード）
+    TRANSCRIBING = "transcribing"                    # 文字起こし中
 
 
 class TranscriptionBackend(str, Enum):

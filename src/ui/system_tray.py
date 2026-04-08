@@ -34,9 +34,10 @@ class SystemTray(QSystemTrayIcon):
     
     # 状態別アイコンカラー
     ICON_COLORS = {
-        AppState.IDLE: QColor("dodgerblue"),        # 待機中：青
-        AppState.RECORDING: QColor("red"),           # 録音中：赤
-        AppState.TRANSCRIBING: QColor("orange"),     # 文字起こし中：オレンジ
+        AppState.IDLE: QColor("dodgerblue"),              # 待機中：青
+        AppState.RECORDING: QColor("red"),                 # 録音中：赤
+        AppState.RECORDING_AUTO_ENTER: QColor("#BF40BF"),  # 録音中（auto_enter）：紫
+        AppState.TRANSCRIBING: QColor("orange"),           # 文字起こし中：オレンジ
     }
     
     # アイコンサイズ（ピクセル）
@@ -128,6 +129,7 @@ class SystemTray(QSystemTrayIcon):
         tooltips = {
             AppState.IDLE: "SuperWhisper - Ready",
             AppState.RECORDING: "SuperWhisper - Recording",
+            AppState.RECORDING_AUTO_ENTER: "SuperWhisper - Recording (Auto Enter)",
             AppState.TRANSCRIBING: "SuperWhisper - Transcribing",
         }
         return tooltips.get(status, "SuperWhisper")
