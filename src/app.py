@@ -255,6 +255,8 @@ class SuperWhisperApp(QObject):
         # 文字起こしキュー関連
         self._transcription_queue: queue.Queue = queue.Queue()
         self._queue_worker_running = False
+        # ワーカー起動の check-and-set を排他化（二重ワーカー起動を防ぐ）
+        self._queue_worker_lock = threading.Lock()
 
         # 強制リセット用の世代カウンタ（リセット後の古い結果を破棄するため）
         self._reset_generation: int = 0
@@ -275,6 +277,8 @@ class SuperWhisperApp(QObject):
 
         # スレッド制御
         self._monitoring = True
+        # キーボードリスナーへの参照（停止・再起動のため保持）
+        self._listener: Optional[Any] = None
 
     def _setup_hotkey_slots(self) -> None:
         """両方のホットキースロットを設定する。"""
@@ -339,24 +343,46 @@ class SuperWhisperApp(QObject):
         self._settings_window.activateWindow()
 
     def _quit_app(self) -> None:
-        """アプリケーションを終了する。"""
+        """アプリケーションを終了する。
+
+        キーボードリスナーと録音ストリームを明示的に停止してから Qt を終了する。
+        これを怠るとマイクが OS にロックされたままになる。
+        """
         logger.info("終了中...")
         self._monitoring = False
+
+        # キーボードリスナーを停止（listener.join() のブロックを解除）
+        listener = self._listener
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception as e:
+                logger.warning(f"キーボードリスナー停止失敗: {e}")
+
+        # 録音を停止してマイクを OS に確実に返す
+        try:
+            self._recorder.stop()
+        except Exception as e:
+            logger.warning(f"終了時の録音停止失敗: {e}")
+
         QApplication.quit()
 
     def force_reset(self) -> None:
         """
         全処理を強制停止してidle状態に戻す。
 
-        録音中・文字起こし中の処理をすべて中断し、
-        キューをクリアしてアプリケーションをクリーン状態に戻す。
+        録音中・文字起こし中の処理をすべて中断し、キューをクリアし、
+        キー押下状態とダブルタップ履歴も完全にクリアする。
+        これにより「Force Reset を押してもキーが押されたまま」状態を解消する。
         """
         logger.info("強制リセットを実行します")
 
-        # 録音中なら停止（音声データは破棄）
-        if self._is_recording:
-            self._is_recording = False
+        # 録音状態を解除し、録音中でなくてもストリーム残骸を確実にクリーンアップ
+        self._is_recording = False
+        try:
             self._recorder.stop()
+        except Exception as e:
+            logger.warning(f"強制リセット時の録音停止失敗: {e}")
 
         # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
         self._reset_generation += 1
@@ -368,8 +394,16 @@ class SuperWhisperApp(QObject):
         # 状態フラグをリセット
         self._active_slot = None
         self._is_transcribing = False
-        self._queue_worker_running = False
+        with self._queue_worker_lock:
+            self._queue_worker_running = False
         self._auto_enter_active = False
+
+        # キー押下状態を強制クリア（取りこぼした on_release を解除）
+        # これがないとリセット後も「キーが押されたまま」と認識され続ける
+        self._pressed_keys.clear()
+        # ダブルタップ検出履歴もクリア（誤発火防止）
+        self._last_hotkey_release_time = 0.0
+        self._last_hotkey_release_slot = None
 
         # UIをidle状態に戻す
         self.status_changed.emit("idle")
@@ -409,9 +443,11 @@ class SuperWhisperApp(QObject):
 
         # ダブルタップモード：テキスト挿入後にEnterキーを自動送信
         if auto_enter:
-            time.sleep(0.05)  # ペースト完了を待機
+            # 設定で調整可能（既定50ms）。一部アプリは即時Enterに反応しないため
+            delay_ms = self._config.get("auto_enter_delay_ms", 50)
+            time.sleep(max(0, delay_ms) / 1000.0)
             self._input_handler.press_enter()
-            logger.info("auto_enter: Enterキーを送信しました")
+            logger.info(f"auto_enter: Enterキーを送信しました (delay={delay_ms}ms)")
 
         # 開発者モード：タイミングをファイルに記録
         if dev_mode:
@@ -525,18 +561,26 @@ class SuperWhisperApp(QObject):
         # 処理中状態を表示（キーを離してもオーバーレイは表示続行）
         self.status_changed.emit("transcribing")
 
-        # ワーカーが動いていなければ開始
-        if not self._queue_worker_running:
-            self._start_queue_worker()
+        # ワーカーが動いていなければ開始（check-and-set はロックで排他化）
+        with self._queue_worker_lock:
+            if not self._queue_worker_running:
+                self._start_queue_worker_locked()
 
-    def _start_queue_worker(self) -> None:
-        """文字起こしキュー処理ワーカースレッドを開始する。"""
+    def _start_queue_worker_locked(self) -> None:
+        """文字起こしキュー処理ワーカースレッドを開始する。
+
+        呼び出し側が self._queue_worker_lock を取得済みであることを前提とする。
+        """
         self._queue_worker_running = True
         self._is_transcribing = True
         threading.Thread(target=self._queue_processor, daemon=True).start()
 
     def _queue_processor(self) -> None:
-        """キューからタスクを順番に処理するワーカー。"""
+        """キューからタスクを順番に処理するワーカー。
+
+        個別タスクの例外でワーカー全体が死なないよう、各タスク処理を
+        try/except/finally で囲み、必ず task_done() を呼ぶ。
+        """
         generation = self._reset_generation  # 開始時の世代を記録
         try:
             while True:
@@ -545,11 +589,21 @@ class SuperWhisperApp(QObject):
                 except queue.Empty:
                     break
 
-                self._process_transcription_task(task)
-                self._transcription_queue.task_done()
+                try:
+                    self._process_transcription_task(task)
+                except Exception as e:
+                    # タスク単位の例外を吸収してワーカーを止めない
+                    logger.exception(f"文字起こしタスク処理で例外発生: {e}")
+                finally:
+                    try:
+                        self._transcription_queue.task_done()
+                    except ValueError:
+                        # 万一 task_done が多すぎても無視（キューを止めない）
+                        pass
         finally:
-            self._queue_worker_running = False
-            self._is_transcribing = False
+            with self._queue_worker_lock:
+                self._queue_worker_running = False
+                self._is_transcribing = False
             # force_resetで世代が変わっていたらidle emitをスキップ（既にリセット済み）
             if (self._reset_generation == generation
                     and self._transcription_queue.empty()
@@ -600,28 +654,49 @@ class SuperWhisperApp(QObject):
 
 
     def _start_keyboard_listener(self) -> None:
-        """両方のホットキースロットを監視するキーボードリスナーを開始する。"""
-        # いずれかのスロットがHoldモードの場合は低レベルリスナーを使用
-        has_hold_mode = any(
-            slot.hotkey_mode == HotkeyMode.HOLD.value
-            for slot in self._hotkey_slots.values()
-        )
+        """両方のホットキースロットを監視するキーボードリスナーを開始する。
 
-        if has_hold_mode:
-            # Hold モードがある場合は低レベルリスナーを使用
-            with keyboard.Listener(
-                on_press=self._handle_key_press,
-                on_release=self._handle_key_release
-            ) as listener:
-                listener.join()
-        else:
-            # 両方Toggleモードの場合はGlobalHotKeysを使用
-            hotkey_map = {}
-            for slot_id, slot in self._hotkey_slots.items():
-                hotkey_map[slot.hotkey] = lambda sid=slot_id: self._on_activate_toggle(sid)
+        リスナーが例外で停止しても自動的に再起動する。
+        外部から self._listener.stop() で停止すると正常終了として扱い、
+        self._monitoring が True なら新しい設定で再起動する（Hot reload 用）。
+        """
+        while self._monitoring:
+            listener = None
+            try:
+                # いずれかのスロットがHoldモードの場合は低レベルリスナーを使用
+                has_hold_mode = any(
+                    slot.hotkey_mode == HotkeyMode.HOLD.value
+                    for slot in self._hotkey_slots.values()
+                )
 
-            with keyboard.GlobalHotKeys(hotkey_map) as h:
-                h.join()
+                if has_hold_mode:
+                    listener = keyboard.Listener(
+                        on_press=self._handle_key_press,
+                        on_release=self._handle_key_release,
+                    )
+                else:
+                    # 両方Toggleモードの場合はGlobalHotKeysを使用
+                    hotkey_map = {}
+                    for slot_id, slot in self._hotkey_slots.items():
+                        hotkey_map[slot.hotkey] = lambda sid=slot_id: self._on_activate_toggle(sid)
+                    listener = keyboard.GlobalHotKeys(hotkey_map)
+
+                self._listener = listener
+                with listener:
+                    listener.join()
+            except Exception as e:
+                # リスナーが例外で死んでも黙って永久停止しないよう必ず再起動
+                logger.error(f"キーボードリスナーが停止しました（{e!r}）。再起動します")
+            finally:
+                self._listener = None
+                # 再起動時に古いキー状態を持ち越さない
+                # （listener 死亡で取りこぼした on_release を強制クリア）
+                self._pressed_keys.clear()
+
+            if not self._monitoring:
+                break
+            # busy-loop 防止（Hot reload 時はほぼ即時に次へ進む）
+            time.sleep(0.5)
 
     def _on_activate_toggle(self, slot_id: int) -> None:
         """
@@ -647,48 +722,63 @@ class SuperWhisperApp(QObject):
         """
         try:
             key_str = self._normalize_key(key)
-            if key_str:
-                self._pressed_keys.add(key_str)
-                # 録音中でなければ、どのスロットのホットキーかチェック
-                if not self._is_recording:
-                    for slot_id, slot in self._hotkey_slots.items():
-                        if self._check_hotkey_match_for_slot(slot):
-                            # ダブルタップ検出：同じスロットで短時間内の再押下
-                            now = time.perf_counter()
-                            if (self._last_hotkey_release_slot == slot_id
-                                    and (now - self._last_hotkey_release_time) < self._double_tap_window_sec):
-                                self._auto_enter_active = True
-                                logger.info(f"ダブルタップ検出 (スロット{slot_id}) - auto_enterモード")
-                            else:
-                                self._auto_enter_active = False
-                            self.start_recording(slot_id)
-                            break
-        except Exception:
-            pass
+            if key_str is None:
+                # 正規化失敗キーは無視（後で発見できるよう debug ログだけ残す）
+                logger.debug(f"キー正規化に失敗（無視）: {key!r}")
+                return
+
+            self._pressed_keys.add(key_str)
+            # 録音中でなければ、どのスロットのホットキーかチェック
+            if not self._is_recording:
+                for slot_id, slot in self._hotkey_slots.items():
+                    if self._check_hotkey_match_for_slot(slot):
+                        # ダブルタップ検出：同じスロットで短時間内の再押下
+                        now = time.perf_counter()
+                        if (self._last_hotkey_release_slot == slot_id
+                                and (now - self._last_hotkey_release_time) < self._double_tap_window_sec):
+                            self._auto_enter_active = True
+                            logger.info(f"ダブルタップ検出 (スロット{slot_id}) - auto_enterモード")
+                        else:
+                            self._auto_enter_active = False
+                        self.start_recording(slot_id)
+                        break
+        except Exception as e:
+            # ハンドラ内例外を握り潰すとリスナーが止まるため必ず復帰
+            logger.exception(f"キー押下処理で例外: {e}")
 
     def _handle_key_release(self, key: Any) -> None:
         """
         キー解放イベントを処理する。
 
         ダブルタップ検出のためにリリース時刻とスロットを記録する。
+        正規化失敗で「録音中なのに押下キーが消失」した状態を検出したら、
+        永久録音を防ぐ保険として stop_and_transcribe() を呼ぶ。
 
         Args:
             key: 解放されたキー
         """
         try:
             key_str = self._normalize_key(key)
-            if key_str and key_str in self._pressed_keys:
+            if key_str is None:
+                logger.debug(f"キー正規化に失敗（無視）: {key!r}")
+                # 保険：押下キーが空なのに録音中の場合は停止（永久録音防止）
+                if self._is_recording and not self._pressed_keys:
+                    logger.warning("正規化失敗時に押下キー無し＋録音中を検出 → 安全のため停止")
+                    self.stop_and_transcribe()
+                return
+
+            if key_str in self._pressed_keys:
                 self._pressed_keys.remove(key_str)
-                # ホットキーに含まれるキーが離されたら録音停止
-                if self._is_recording and self._active_slot is not None:
-                    active_slot = self._hotkey_slots[self._active_slot]
-                    if self._is_hotkey_key_released_for_slot(key_str, active_slot):
-                        # ダブルタップ検出用にリリース時刻とスロットを記録
-                        self._last_hotkey_release_time = time.perf_counter()
-                        self._last_hotkey_release_slot = self._active_slot
-                        self.stop_and_transcribe()
-        except Exception:
-            pass
+            # ホットキーに含まれるキーが離されたら録音停止
+            if self._is_recording and self._active_slot is not None:
+                active_slot = self._hotkey_slots[self._active_slot]
+                if self._is_hotkey_key_released_for_slot(key_str, active_slot):
+                    # ダブルタップ検出用にリリース時刻とスロットを記録
+                    self._last_hotkey_release_time = time.perf_counter()
+                    self._last_hotkey_release_slot = self._active_slot
+                    self.stop_and_transcribe()
+        except Exception as e:
+            logger.exception(f"キー解放処理で例外: {e}")
 
     def _is_hotkey_key_released_for_slot(self, key_str: str, slot: HotkeySlot) -> bool:
         """

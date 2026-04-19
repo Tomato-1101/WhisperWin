@@ -2,6 +2,46 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-04-19
+
+### Fixed
+- **連打フリーズ問題の根治（マイク占有/キー押下誤認識/Force Reset 効かず）**
+  - `force_reset()` で `_pressed_keys` / `_last_hotkey_release_time` / `_last_hotkey_release_slot` をクリアするよう修正。リセット後も「キーが押されたまま」と誤認識される問題を解消（`src/app.py`）
+  - キーボードリスナー (`_start_keyboard_listener`) を自動復旧ループ化。例外で死んでも黙って永久停止せず、押下キー状態をクリアして再起動する（`src/app.py`）
+  - `_quit_app()` で `listener.stop()` と `recorder.stop()` を明示的に呼ぶよう修正。終了時にマイクが OS にロックされ続ける問題を解消（`src/app.py`）
+  - `AudioRecorder` の `start` / `stop` / `_cleanup_stream` を `threading.RLock` で直列化。`stop` 中に `start` が割り込んで旧ストリームが OS 占有のまま捨てられる競合を解消（`src/core/audio_recorder.py`）
+  - `_cleanup_stream` で `stream.stop()` と `stream.close()` を独立 try/except で囲み、片方が例外を出しても他方を必ず実行するよう修正（`src/core/audio_recorder.py`）
+  - `_queue_processor` の各タスク処理を try/except/finally で囲み、個別タスクの例外でワーカー全体が死なないようにした。`task_done()` も常に呼ぶ（`src/app.py`）
+  - `_queue_worker_running` の check-and-set を `_queue_worker_lock` で排他化し、二重ワーカー起動を防止（`src/app.py`）
+  - `_handle_key_press` / `_handle_key_release` で `_normalize_key` 失敗時の挙動を改善。debug ログ出力＋永久録音を防ぐ保険として「押下キー無し＋録音中」検出時に自動停止（`src/app.py`）
+
+### Technical Details
+- **src/app.py**
+  - `_setup_state` に `_queue_worker_lock` (Lock) と `_listener` 参照保持を追加
+  - `_start_queue_worker` を `_start_queue_worker_locked` にリネーム（呼び出し側がロック取得済み前提）
+  - キーボードリスナー再起動ループにより Hot reload 時のリスナー入れ替えも将来対応可能
+- **src/core/audio_recorder.py**
+  - `__init__` に `threading.RLock` を追加し、ライフサイクル全パスを保護
+  - `start()` 冒頭で残骸ストリームのクリーンアップを実施
+
+---
+
+## [Unreleased] - 2026-04-18
+
+### Added
+- **Auto Enter 遅延調整スライダー**
+  - ダブルタップ時のテキスト挿入後〜Enter押下までの待機時間をUIから調整可能に
+  - Settings の Advanced ページにスライダー（0〜500ms、既定50ms）と現在値ラベルを追加
+  - 即時Enterに反応しないアプリ（Slack、一部Webフォーム等）向けに遅延を伸ばせる
+  - 新規設定キー `auto_enter_delay_ms` を追加（settings.yaml・ホットリロード対応）
+
+### Technical Details
+- **constants.py**: `DEFAULT_CONFIG` に `auto_enter_delay_ms: 50` を追加
+- **settings_window.py**: `QSlider` + `QLabel` を Advanced ページに追加、load/save に反映
+- **app.py**: `_handle_transcription_result()` のハードコード `time.sleep(0.05)` を `self._config.get("auto_enter_delay_ms", 50)` 参照に置換
+
+---
+
 ## [Unreleased] - 2026-04-08
 
 ### Added

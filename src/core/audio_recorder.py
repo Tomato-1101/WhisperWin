@@ -6,6 +6,7 @@ sounddeviceライブラリを使用してマイクから音声を録音する機
 """
 
 import queue
+import threading
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -50,6 +51,9 @@ class AudioRecorder:
         self._level_callback: Optional[callable] = None  # 音声レベルコールバック
         self._level_threshold = 0.02  # 音声検出のしきい値
         self._input_device: Optional[Union[int, str]] = None
+        # start/stop/_cleanup_stream の競合を防ぐための再入可能ロック
+        # （stop 中に start が割り込むと OS マイクが解放されない問題への対策）
+        self._lock = threading.RLock()
         self.set_input_device(input_device)
 
     @staticmethod
@@ -182,67 +186,76 @@ class AudioRecorder:
     def start(self) -> bool:
         """
         録音を開始する。
-        
+
         Returns:
             成功した場合True、既に録音中の場合False
         """
-        if self._recording:
-            logger.info("既に録音中です。")
-            return False
-        
-        try:
-            # キューをクリア
-            self._clear_queue()
+        with self._lock:
+            if self._recording:
+                logger.info("既に録音中です。")
+                return False
 
-            stream_kwargs = {
-                "samplerate": self.sample_rate,
-                "channels": AUDIO_CHANNELS,
-                "dtype": AUDIO_DTYPE,
-                "callback": self._audio_callback,
-            }
-            if self._input_device is not None:
-                stream_kwargs["device"] = self._input_device
+            # 万一前回の stop が中途半端に終わっていてもストリーム残骸を確実に解放
+            if self._stream is not None:
+                self._cleanup_stream()
 
-            # 音声入力ストリームを作成・開始
             try:
-                self._stream = sd.InputStream(**stream_kwargs)
+                # キューをクリア
+                self._clear_queue()
+
+                stream_kwargs = {
+                    "samplerate": self.sample_rate,
+                    "channels": AUDIO_CHANNELS,
+                    "dtype": AUDIO_DTYPE,
+                    "callback": self._audio_callback,
+                }
+                if self._input_device is not None:
+                    stream_kwargs["device"] = self._input_device
+
+                # 音声入力ストリームを作成・開始
+                try:
+                    self._stream = sd.InputStream(**stream_kwargs)
+                except Exception as e:
+                    if self._input_device is None:
+                        raise
+
+                    logger.warning(
+                        f"指定入力デバイス({self._input_device})で録音開始に失敗。"
+                        f"デフォルトデバイスへフォールバックします: {e}"
+                    )
+                    stream_kwargs.pop("device", None)
+                    self._stream = sd.InputStream(**stream_kwargs)
+
+                self._stream.start()
+                self._recording = True
+                device_label = "default" if self._input_device is None else str(self._input_device)
+                logger.info(f"録音開始... (input_device={device_label})")
+                return True
+
             except Exception as e:
-                if self._input_device is None:
-                    raise
-
-                logger.warning(
-                    f"指定入力デバイス({self._input_device})で録音開始に失敗。"
-                    f"デフォルトデバイスへフォールバックします: {e}"
-                )
-                stream_kwargs.pop("device", None)
-                self._stream = sd.InputStream(**stream_kwargs)
-
-            self._stream.start()
-            self._recording = True
-            device_label = "default" if self._input_device is None else str(self._input_device)
-            logger.info(f"録音開始... (input_device={device_label})")
-            return True
-            
-        except Exception as e:
-            logger.error(f"録音開始に失敗: {e}")
-            self._cleanup_stream()
-            return False
+                logger.error(f"録音開始に失敗: {e}")
+                self._cleanup_stream()
+                self._recording = False
+                return False
 
     def stop(self) -> npt.NDArray[np.float32]:
         """
         録音を停止し、音声データを返す。
-        
+
         Returns:
             録音した音声データ（float32のNumPy配列）
         """
-        if not self._recording:
-            return np.array([], dtype=np.float32)
+        with self._lock:
+            if not self._recording and self._stream is None:
+                return np.array([], dtype=np.float32)
 
-        self._recording = False
-        self._cleanup_stream()
-        logger.info("録音停止。")
-        
-        return self._collect_audio_data()
+            # フラグ解除を先に行うことで、callback の以降の発火を抑制する
+            # （ストリーム close の前にコールバック側で何か処理する場合に備える）
+            self._recording = False
+            self._cleanup_stream()
+            logger.info("録音停止。")
+
+            return self._collect_audio_data()
 
     def _clear_queue(self) -> None:
         """キューをクリアする。"""
@@ -250,13 +263,25 @@ class AudioRecorder:
             self._queue.queue.clear()
 
     def _cleanup_stream(self) -> None:
-        """音声ストリームをクリーンアップする。"""
-        if self._stream:
+        """音声ストリームをクリーンアップする。
+
+        stream.stop() と stream.close() を独立した try/except で囲み、
+        片方が例外を投げても他方は必ず実行する。最終的に self._stream は
+        必ず None に戻し、OS マイクハンドルが残らないようにする。
+        """
+        with self._lock:
+            stream = self._stream
+            if stream is None:
+                return
             try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception as e:
-                logger.error(f"ストリーム停止エラー: {e}")
+                try:
+                    stream.stop()
+                except Exception as e:
+                    logger.error(f"ストリーム stop() エラー: {e}")
+                try:
+                    stream.close()
+                except Exception as e:
+                    logger.error(f"ストリーム close() エラー: {e}")
             finally:
                 self._stream = None
 
