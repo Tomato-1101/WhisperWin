@@ -279,6 +279,9 @@ class SuperWhisperApp(QObject):
         self._monitoring = True
         # キーボードリスナーへの参照（停止・再起動のため保持）
         self._listener: Optional[Any] = None
+        # 録音 start/stop の check-then-set を排他化（並列で start↔stop が競合する race を防ぐ）
+        # ロック順序: _recording_lock を取得した中で _queue_worker_lock を取る（逆順は禁止）
+        self._recording_lock = threading.RLock()
 
     def _setup_hotkey_slots(self) -> None:
         """両方のホットキースロットを設定する。
@@ -387,36 +390,40 @@ class SuperWhisperApp(QObject):
         録音中・文字起こし中の処理をすべて中断し、キューをクリアし、
         キー押下状態とダブルタップ履歴も完全にクリアする。
         これにより「Force Reset を押してもキーが押されたまま」状態を解消する。
+
+        並列の start_recording / stop_and_transcribe と直列化するため
+        self._recording_lock を取得する。
         """
         logger.info("強制リセットを実行します")
 
-        # 録音状態を解除し、録音中でなくてもストリーム残骸を確実にクリーンアップ
-        self._is_recording = False
-        try:
-            self._recorder.stop()
-        except Exception as e:
-            logger.warning(f"強制リセット時の録音停止失敗: {e}")
+        with self._recording_lock:
+            # 録音状態を解除し、録音中でなくてもストリーム残骸を確実にクリーンアップ
+            self._is_recording = False
+            try:
+                self._recorder.stop()
+            except Exception as e:
+                logger.warning(f"強制リセット時の録音停止失敗: {e}")
 
-        # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
-        self._reset_generation += 1
+            # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
+            self._reset_generation += 1
 
-        # キューをクリア（未処理タスクを破棄）
-        with self._transcription_queue.mutex:
-            self._transcription_queue.queue.clear()
+            # キューをクリア（未処理タスクを破棄）
+            with self._transcription_queue.mutex:
+                self._transcription_queue.queue.clear()
 
-        # 状態フラグをリセット
-        self._active_slot = None
-        self._is_transcribing = False
-        with self._queue_worker_lock:
-            self._queue_worker_running = False
-        self._auto_enter_active = False
+            # 状態フラグをリセット
+            self._active_slot = None
+            self._is_transcribing = False
+            with self._queue_worker_lock:
+                self._queue_worker_running = False
+            self._auto_enter_active = False
 
-        # キー押下状態を強制クリア（取りこぼした on_release を解除）
-        # これがないとリセット後も「キーが押されたまま」と認識され続ける
-        self._pressed_keys.clear()
-        # ダブルタップ検出履歴もクリア（誤発火防止）
-        self._last_hotkey_release_time = 0.0
-        self._last_hotkey_release_slot = None
+            # キー押下状態を強制クリア（取りこぼした on_release を解除）
+            # これがないとリセット後も「キーが押されたまま」と認識され続ける
+            self._pressed_keys.clear()
+            # ダブルタップ検出履歴もクリア（誤発火防止）
+            self._last_hotkey_release_time = 0.0
+            self._last_hotkey_release_slot = None
 
         # UIをidle状態に戻す
         self.status_changed.emit("idle")
@@ -514,43 +521,47 @@ class SuperWhisperApp(QObject):
         Args:
             slot_id: アクティブなホットキースロットID
         """
-        if self._is_recording or slot_id is None:
-            return
+        with self._recording_lock:
+            if self._is_recording or slot_id is None:
+                return
 
-        self._active_slot = slot_id
-        slot = self._hotkey_slots[slot_id]
+            self._active_slot = slot_id
+            slot = self._hotkey_slots[slot_id]
 
-        logger.info(f"録音開始 (スロット {slot_id}, バックエンド: {slot.backend})")
+            logger.info(f"録音開始 (スロット {slot_id}, バックエンド: {slot.backend})")
 
-        transcriber = self._get_transcriber_for_slot(slot)
-        if transcriber is None:
-            logger.warning(f"スロット{slot_id}のAPIクライアント初期化に失敗したため録音を開始しません。")
-            self._show_backend_warning(f"{slot.backend}_unavailable")
-            return
+            transcriber = self._get_transcriber_for_slot(slot)
+            if transcriber is None:
+                logger.warning(f"スロット{slot_id}のAPIクライアント初期化に失敗したため録音を開始しません。")
+                self._active_slot = None
+                self._show_backend_warning(f"{slot.backend}_unavailable")
+                return
 
-        self._is_recording = True
-        if self._auto_enter_active:
-            self.status_changed.emit("recording_auto_enter")
-        else:
-            self.status_changed.emit("recording")
+            self._is_recording = True
+            if self._auto_enter_active:
+                self.status_changed.emit("recording_auto_enter")
+            else:
+                self.status_changed.emit("recording")
 
-        # 使用するTranscriberのモデルをプリロード
-        threading.Thread(target=transcriber.load_model, daemon=True).start()
-        self._recorder.start()
+            # 使用するTranscriberのモデルをプリロード
+            threading.Thread(target=transcriber.load_model, daemon=True).start()
+            self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
         """録音を停止して文字起こしタスクをキューに追加する。"""
-        if not self._is_recording or self._active_slot is None:
-            return
+        with self._recording_lock:
+            if not self._is_recording or self._active_slot is None:
+                return
 
-        logger.info("録音停止")
-        self._is_recording = False
+            logger.info("録音停止")
+            self._is_recording = False
 
-        # ダブルタップのauto_enterフラグを取得してリセット
-        auto_enter = self._auto_enter_active
-        self._auto_enter_active = False
+            # ダブルタップのauto_enterフラグを取得してリセット
+            auto_enter = self._auto_enter_active
+            self._auto_enter_active = False
 
-        audio_data = self._recorder.stop()
+            audio_data = self._recorder.stop()
+            active_slot_id = self._active_slot
 
         # 音声データが空の場合
         if len(audio_data) == 0:
@@ -565,7 +576,7 @@ class SuperWhisperApp(QObject):
         # タスクをキューに追加
         task = TranscriptionTask(
             audio_data=audio_data,
-            slot_id=self._active_slot,
+            slot_id=active_slot_id,
             timestamp=time.perf_counter(),
             auto_enter=auto_enter,
         )
