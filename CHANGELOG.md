@@ -5,6 +5,12 @@ WhisperWinの変更履歴を記録するファイルです。
 ## [Unreleased] - 2026-04-19
 
 ### Fixed
+- **プラットフォーム整合性の向上（Phase 2）**
+  - `InputHandler.insert_text` の貼り付けキー操作を `with pressed(...)` から明示的な `try/finally` に変更。`'v'` の release で例外が発生しても修飾キー（Cmd/Ctrl）が確実に解放されるよう改善（`src/core/input_handler.py`）
+  - `OpenAITranscriber` / `GroqTranscriber` に `close()` メソッドを追加し、`unload_model()` から呼び出すよう変更。httpx 接続プールを明示的に閉じてリークを防ぐ（`src/core/openai_transcriber.py`, `src/core/groq_transcriber.py`）
+  - `_setup_hotkey_slots()` の冒頭で旧 `api_transcriber.close()` を呼び、Hot reload 時に旧クライアントの HTTP 接続が leak する問題を解消（`src/app.py`）
+  - `_apply_config_changes()` で slots 変更検出時に `self._listener.stop()` を呼び、自動再起動ループに新設定でリスナーを再立ち上げさせる（`src/app.py`）
+
 - **連打フリーズ問題の根治（マイク占有/キー押下誤認識/Force Reset 効かず）**
   - `force_reset()` で `_pressed_keys` / `_last_hotkey_release_time` / `_last_hotkey_release_slot` をクリアするよう修正。リセット後も「キーが押されたまま」と誤認識される問題を解消（`src/app.py`）
   - キーボードリスナー (`_start_keyboard_listener`) を自動復旧ループ化。例外で死んでも黙って永久停止せず、押下キー状態をクリアして再起動する（`src/app.py`）

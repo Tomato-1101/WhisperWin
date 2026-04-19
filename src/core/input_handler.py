@@ -58,14 +58,22 @@ class InputHandler:
             time.sleep(PASTE_DELAY)
             
             # OS別アダプタが定義する貼り付けショートカットを使用
+            # 修飾キーが押しっぱなしになる事故を防ぐため try/finally で確実に release
             paste_modifier = self._platform.paste_modifier
-            with self._keyboard.pressed(paste_modifier):
+            self._keyboard.press(paste_modifier)
+            try:
                 self._keyboard.press('v')
                 self._keyboard.release('v')
-            
+            finally:
+                try:
+                    self._keyboard.release(paste_modifier)
+                except Exception as e:
+                    # release 失敗は致命ではないが、修飾キーが残ると操作不能になるため警告
+                    logger.warning(f"貼り付け修飾キーの解放に失敗: {e}")
+
             logger.debug(f"テキスト挿入: {text[:50]}...")
             return True
-            
+
         except Exception as e:
             logger.error(f"テキスト挿入エラー: {e}")
             return False

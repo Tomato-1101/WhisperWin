@@ -281,7 +281,20 @@ class SuperWhisperApp(QObject):
         self._listener: Optional[Any] = None
 
     def _setup_hotkey_slots(self) -> None:
-        """両方のホットキースロットを設定する。"""
+        """両方のホットキースロットを設定する。
+
+        既存の API Transcriber インスタンスがあれば先に close() を呼び、
+        Hot reload 時に httpx 接続プールが leak しないようにする。
+        """
+        # 旧 transcriber の HTTP コネクションプールを閉じる
+        for old_slot in self._hotkey_slots.values():
+            old_transcriber = old_slot.api_transcriber
+            if old_transcriber is not None and hasattr(old_transcriber, "close"):
+                try:
+                    old_transcriber.close()
+                except Exception as e:
+                    logger.warning(f"旧 transcriber close 失敗 (slot{old_slot.slot_id}): {e}")
+
         for slot_id in [1, 2]:
             slot_config = self._config.get(f"hotkey{slot_id}", {})
 
@@ -936,6 +949,15 @@ class SuperWhisperApp(QObject):
             slots_changed = True
             self._api_common_settings = current_common_settings
 
-        # スロット設定が変更された場合は再初期化
+        # スロット設定が変更された場合は再初期化＋リスナー再起動
         if slots_changed:
             self._setup_hotkey_slots()
+            # 現在のリスナーを停止すると、_start_keyboard_listener の while ループが
+            # 新しいスロット設定で次のリスナーを起動する（_monitoring=True のため）
+            listener = self._listener
+            if listener is not None:
+                try:
+                    listener.stop()
+                    logger.info("Hot reload: キーボードリスナーを再起動します")
+                except Exception as e:
+                    logger.warning(f"Hot reload 時のリスナー停止失敗: {e}")
