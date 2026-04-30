@@ -80,6 +80,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # ダブルタップ Auto-Enter: テキスト挿入後からEnter押下までの待機時間（ms）
     # 一部アプリは即座のEnterに反応しないため調整可能にする
     "auto_enter_delay_ms": 50,
+
+    # 音声前処理（API送信前）
+    # volume_normalize: Peak+RMS ハイブリッド正規化（目標 -20 dBFS、ピーク -3 dBFS）
+    # ノイズ対策は API モデル側に任せるため、ここでは音量のみ調整する
+    "audio_preprocess": {
+        "volume_normalize": True,
+    },
 }
 
 # ============================================

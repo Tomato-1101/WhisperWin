@@ -555,6 +555,15 @@ class SettingsWindow(QWidget):
 
         layout.addRow("Input Device:", device_row)
 
+        # 音声前処理（API送信前）：Peak+RMS ハイブリッド音量正規化
+        # ノイズ対策は API モデル側に任せ、ここでは小音量を持ち上げて音割れを防ぐのみ
+        self._volume_normalize_check = QCheckBox("Volume Normalization (Peak+RMS)")
+        layout.addRow("Audio Preprocess:", self._volume_normalize_check)
+
+        preprocess_hint = QLabel("小さい声を底上げし、音割れしない範囲でゲイン調整します")
+        preprocess_hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addRow("", preprocess_hint)
+
         return page
 
     def _populate_input_devices(self) -> None:
@@ -621,6 +630,10 @@ class SettingsWindow(QWidget):
         self._auto_enter_delay_slider.setValue(config.get("auto_enter_delay_ms", 50))
         self._populate_input_devices()
         self._set_input_device_selection(config.get("audio_input_device", "default"))
+
+        # 音声前処理（音量正規化のみ）
+        preprocess_cfg = config.get("audio_preprocess", {}) or {}
+        self._volume_normalize_check.setChecked(bool(preprocess_cfg.get("volume_normalize", True)))
 
         # APIモデルとバックエンド表示状態を初期化
         for slot_id in [1, 2]:
@@ -700,6 +713,11 @@ class SettingsWindow(QWidget):
             "vad_min_silence_duration_ms": self._vad_silence_spin.value(),
             "audio_input_device": selected_input_device,
             "auto_enter_delay_ms": self._auto_enter_delay_slider.value(),
+
+            # 音声前処理（音量正規化のみ）
+            "audio_preprocess": {
+                "volume_normalize": self._volume_normalize_check.isChecked(),
+            },
 
             # ホットキー1 設定
             "hotkey1": {

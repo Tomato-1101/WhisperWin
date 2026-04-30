@@ -16,9 +16,10 @@ from PySide6.QtWidgets import QApplication
 from pynput import keyboard
 
 from .config import ConfigManager, HotkeyMode, TranscriptionBackend
-from .config.constants import CONFIG_CHECK_INTERVAL_SEC
+from .config.constants import CONFIG_CHECK_INTERVAL_SEC, SAMPLE_RATE
 from .config.types import TranscriptionTask
 from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber
+from .core.audio_preprocess import preprocess as preprocess_audio
 from .platform import get_platform_adapter
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
@@ -569,8 +570,20 @@ class SuperWhisperApp(QObject):
                 self.status_changed.emit("idle")
             return
 
+        # API 送信前の音声前処理（音量正規化）
+        # 失敗してもアプリは止めず原音で続行。
+        preprocess_cfg = self._config.get("audio_preprocess", {}) or {}
+        try:
+            audio_data = preprocess_audio(
+                audio_data,
+                sample_rate=SAMPLE_RATE,
+                enable_normalize=bool(preprocess_cfg.get("volume_normalize", True)),
+            )
+        except Exception as e:
+            logger.warning(f"音声前処理でエラー、原音を使用: {e}")
+
         # 開発者モード用に保存
-        audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
+        audio_duration = len(audio_data) / SAMPLE_RATE
         self._last_audio_duration = audio_duration
 
         # タスクをキューに追加

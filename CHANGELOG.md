@@ -2,12 +2,23 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
-## [Unreleased] - 2026-04-19
+## [Unreleased] - 2026-04-30
 
 ### Added
+- **音声前処理パイプライン（音量正規化）**
+  - 新規モジュール `src/core/audio_preprocess.py` を追加
+  - Peak+RMS ハイブリッド音量正規化：目標 RMS = -20 dBFS、ピーク上限 = -3 dBFS（音割れ防止）
+  - 録音直後・API 送信前に適用、numpy のみで <1ms の低レイテンシ
+  - 小さい声を底上げして API 文字起こしの精度を向上、大音量はクリッピング防止のため抑え込み
+  - ノイズ対策は API モデル側に任せる方針（noisereduce 等は採用せず）
 - **Auto Enter Delay スライダーを設定 UI に追加**
   - ダブルタップ Auto-Enter 機能で、テキスト挿入後から Enter 押下までの待機時間を 0〜500ms で調整可能（`src/ui/settings_window.py`）
   - 既定値 50ms。一部アプリが即時 Enter に反応しない問題に対するユーザー調整手段（`src/config/constants.py`）
+
+### Changed
+- `DEFAULT_CONFIG` に `audio_preprocess.volume_normalize` キーを追加（既定 True）
+- 設定 UI の Advanced タブに音声前処理セクションを追加
+- `stop_and_transcribe()` で `recorder.stop()` 直後に `preprocess_audio()` を呼ぶよう変更（`src/app.py`）
 
 ### Fixed
 - **録音状態の Race Condition 解消（Phase 3）**
