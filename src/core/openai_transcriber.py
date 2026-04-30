@@ -90,7 +90,7 @@ class OpenAITranscriber:
         if vad_filter:
             self._vad_filter = VadFilter(
                 min_silence_duration_ms=vad_min_silence_duration_ms,
-                use_cuda=True  # VADにはCUDAを使用
+                use_cuda=True  # 利用可能なハードウェアアクセラレーションを使用
             )
 
         # タイミング情報
@@ -230,7 +230,23 @@ class OpenAITranscriber:
         クライアント参照をクリアする。
 
         OpenAI APIはサーバーレスのため、キャッシュされたクライアントをクリアするのみ。
+        HTTP コネクションプールも close() して接続リークを防ぐ。
         """
+        self.close()
+
+    def close(self) -> None:
+        """OpenAI クライアントの HTTP コネクションプールを閉じる。
+
+        ホットリロード等で本インスタンスが破棄される際に呼び、
+        httpx 接続プールが leak しないようにする。
+        """
+        client = self._client
+        if client is not None:
+            try:
+                if hasattr(client, "close"):
+                    client.close()
+            except Exception as e:
+                logger.warning(f"OpenAIクライアント close に失敗: {e}")
         self._client = None
         logger.debug("OpenAIクライアント参照をクリアしました")
 

@@ -9,16 +9,18 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any, Dict, Optional, Set, Tuple, Union
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 from pynput import keyboard
 
 from .config import ConfigManager, HotkeyMode, TranscriptionBackend
-from .config.constants import CONFIG_CHECK_INTERVAL_SEC
+from .config.constants import CONFIG_CHECK_INTERVAL_SEC, SAMPLE_RATE
 from .config.types import TranscriptionTask
-from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber, Transcriber
+from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber
+from .core.audio_preprocess import preprocess as preprocess_audio
+from .platform import get_platform_adapter
 from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
@@ -66,12 +68,13 @@ class SuperWhisperApp(QObject):
     
     # UIスレッドセーフな更新用シグナル
     status_changed = Signal(str)
-    text_ready = Signal(str)
+    text_ready = Signal(str, bool)  # (text, auto_enter)
     
     def __init__(self) -> None:
         """アプリケーションを初期化する。"""
         super().__init__()
         logger.info("WhisperWinを初期化中...")
+        self._platform = get_platform_adapter()
         
         self._setup_config()
         self._setup_core_components()
@@ -79,8 +82,8 @@ class SuperWhisperApp(QObject):
         self._setup_signals()
         self._setup_state()
         self._start_background_threads()
-        self._preload_models_async()  # 状態初期化後にプリロード
-
+        self._preload_models_async()
+        
         logger.info("アプリケーション準備完了。")
         self.status_changed.emit("idle")
 
@@ -90,35 +93,26 @@ class SuperWhisperApp(QObject):
 
     def _setup_core_components(self) -> None:
         """コアビジネスロジックコンポーネントを初期化する。"""
-        self._recorder = AudioRecorder()
+        initial_input_device = self._config.get("audio_input_device", "default")
+        self._recorder = AudioRecorder(input_device=initial_input_device)
+        self._current_input_device = AudioRecorder.normalize_device_setting(initial_input_device)
 
         # 音声レベルコールバックを設定（波形アニメーション用）
         self._recorder.set_level_callback(self._on_audio_level)
 
-        # ローカルTranscriberは共有インスタンス（遅延初期化）
-        self._local_transcriber: Optional[Transcriber] = None
+        self._input_handler = InputHandler(platform_adapter=self._platform)
 
-        self._input_handler = InputHandler()
-
-    def _get_transcriber_for_slot(self, slot: HotkeySlot) -> Union[Transcriber, GroqTranscriber, OpenAITranscriber]:
+    def _get_transcriber_for_slot(self, slot: HotkeySlot) -> Optional[Union[GroqTranscriber, OpenAITranscriber]]:
         """
         スロットに対応するTranscriberを取得する。
-
-        ローカルバックエンドの場合は共有インスタンスを返し、
-        APIバックエンドの場合はスロット固有のインスタンスを返す。
 
         Args:
             slot: ホットキースロット
 
         Returns:
-            Transcriberインスタンス
+            API Transcriberインスタンス
         """
-        if slot.backend == TranscriptionBackend.LOCAL.value:
-            if self._local_transcriber is None:
-                self._local_transcriber = self._create_local_transcriber()
-            return self._local_transcriber
-        else:
-            return slot.api_transcriber
+        return slot.api_transcriber
 
     def _create_api_transcriber(self, slot: HotkeySlot) -> Optional[Union[GroqTranscriber, OpenAITranscriber]]:
         """
@@ -174,23 +168,12 @@ class SuperWhisperApp(QObject):
 
         return None
 
-    def _create_local_transcriber(self) -> Transcriber:
-        """ローカルGPU Transcriberを作成する（共通）。"""
-        logger.info("ローカルGPUバックエンド（faster-whisper）を使用")
-        local_config = self._config.get("local_backend", {})
-        return Transcriber(
-            model_size=local_config.get("model_size", "base"),
-            compute_type=local_config.get("compute_type", "float16"),
-            language=self._config.get("language", "ja"),
-            release_memory_delay=local_config.get("release_memory_delay", 300),
-            vad_filter=self._config.get("vad_filter", True),
-            vad_min_silence_duration_ms=self._config.get("vad_min_silence_duration_ms", 500),
-            condition_on_previous_text=local_config.get("condition_on_previous_text", False),
-            no_speech_threshold=local_config.get("no_speech_threshold", 0.6),
-            log_prob_threshold=local_config.get("log_prob_threshold", -1.0),
-            no_speech_prob_cutoff=local_config.get("no_speech_prob_cutoff", 0.7),
-            beam_size=local_config.get("beam_size", 5),
-            model_cache_dir=local_config.get("model_cache_dir", ""),
+    def _get_common_api_settings(self) -> Tuple[str, bool, int]:
+        """API Transcriber共通設定（language/VAD）を取得する。"""
+        return (
+            self._config.get("language", "ja"),
+            self._config.get("vad_filter", True),
+            self._config.get("vad_min_silence_duration_ms", 500),
         )
 
     def _show_backend_warning(self, warning_type: str) -> None:
@@ -201,10 +184,10 @@ class SuperWhisperApp(QObject):
             warning_type: 警告タイプ（"groq_unavailable", "openai_unavailable"等）
         """
         messages = {
-            "groq_unavailable": "Groq API unavailable\nUsing local GPU",
-            "openai_unavailable": "OpenAI API unavailable\nUsing local GPU",
+            "groq_unavailable": "Groq API unavailable\nCheck GROQ_API_KEY",
+            "openai_unavailable": "OpenAI API unavailable\nCheck OPENAI_API_KEY",
         }
-        message = messages.get(warning_type, "API unavailable\nUsing local GPU")
+        message = messages.get(warning_type, "API unavailable")
         self._overlay.show_temporary_message(
             message,
             duration_ms=3000,
@@ -213,78 +196,36 @@ class SuperWhisperApp(QObject):
 
     def _preload_vad_model(self) -> None:
         """
-        VADモデルをバックグラウンドでプリロードする。
+        VADモデルをプリロードする。
 
-        アプリ起動時に呼び出すことで、最初の音声入力時の
-        VADモデルロード遅延を回避する。
-        """
-        def _preload_worker():
-            try:
-                # APIバックエンドのスロットがあればVADをプリロード
-                if hasattr(self, '_hotkey_slots'):
-                    for slot in self._hotkey_slots.values():
-                        if slot.api_transcriber and hasattr(slot.api_transcriber, 'preload_vad'):
-                            slot.api_transcriber.preload_vad()
-                logger.debug("VADプリロード完了")
-            except Exception as e:
-                logger.warning(f"VADプリロードに失敗しました: {e}")
-
-        # バックグラウンドスレッドでプリロード
-        threading.Thread(target=_preload_worker, daemon=True).start()
-
-    def _preload_local_transcriber(self) -> None:
-        """
-        ローカルTranscriberとWhisperモデルを事前にロードする。
-
-        最初の文字起こし時の遅延を回避するため、起動時に呼び出す。
+        最初の音声入力時のVADモデルロード遅延を回避する。
         """
         try:
-            if self._local_transcriber is None:
-                logger.info("ローカルTranscriberをプリロード中...")
-                self._local_transcriber = self._create_local_transcriber()
-
-            logger.info("Whisperモデルをプリロード中...")
-            self._local_transcriber.load_model()
-            logger.info("Whisperモデルのプリロードが完了しました")
+            for slot in self._hotkey_slots.values():
+                if slot.api_transcriber and hasattr(slot.api_transcriber, 'preload_vad'):
+                    slot.api_transcriber.preload_vad()
+                    logger.info(f"スロット{slot.slot_id}のVADをプリロードしました")
+            logger.info("VADプリロード完了")
         except Exception as e:
-            logger.warning(f"ローカルTranscriberのプリロードに失敗: {e}")
+            logger.warning(f"VADプリロードに失敗しました: {e}")
 
     def _preload_models_async(self) -> None:
         """
         起動時にモデルをバックグラウンドでプリロードする。
 
-        UIをブロックせずに、VADとWhisperモデルをロードする。
+        UIをブロックせずにVADモデルをロードする。
         """
         if not self._config.get("preload_on_startup", True):
             logger.info("起動時プリロードが無効です")
             return
 
-        def _preload_worker():
-            try:
-                # 1. API Transcriber用VADをプリロード
-                for slot in self._hotkey_slots.values():
-                    if slot.api_transcriber and hasattr(slot.api_transcriber, 'preload_vad'):
-                        slot.api_transcriber.preload_vad()
-                        logger.info(f"スロット{slot.slot_id}のVADをプリロードしました")
-
-                # 2. ローカルバックエンドを使用するスロットがあればWhisperモデルをプリロード
-                uses_local_backend = any(
-                    slot.backend == "local" for slot in self._hotkey_slots.values()
-                )
-                if uses_local_backend:
-                    self._preload_local_transcriber()
-
-                logger.info("モデルプリロード完了")
-            except Exception as e:
-                logger.warning(f"モデルプリロードに失敗: {e}")
-
-        threading.Thread(target=_preload_worker, daemon=True).start()
+        threading.Thread(target=self._preload_vad_model, daemon=True).start()
 
     def _setup_ui_components(self) -> None:
         """UIコンポーネントを初期化する。"""
         self._overlay = DynamicIslandOverlay()
-        self._settings_window = SettingsWindow()
-        self._tray = SystemTray()
+        self._settings_window = SettingsWindow(platform_adapter=self._platform)
+        self._tray = SystemTray(platform_adapter=self._platform)
 
     def _on_audio_level(self, level: float, has_voice: bool) -> None:
         """
@@ -301,6 +242,7 @@ class SuperWhisperApp(QObject):
     def _setup_signals(self) -> None:
         """シグナルをスロットに接続する。"""
         self._tray.open_settings.connect(self._open_settings)
+        self._tray.force_reset.connect(self.force_reset)
         self._tray.quit_app.connect(self._quit_app)
         self.status_changed.connect(self._update_ui_status)
         self.text_ready.connect(self._handle_transcription_result)
@@ -311,28 +253,63 @@ class SuperWhisperApp(QObject):
         self._is_transcribing = False
         self._active_slot: Optional[int] = None  # 現在アクティブなスロット
 
-        # キュー関連の状態変数
+        # 文字起こしキュー関連
         self._transcription_queue: queue.Queue = queue.Queue()
         self._queue_worker_running = False
+        # ワーカー起動の check-and-set を排他化（二重ワーカー起動を防ぐ）
+        self._queue_worker_lock = threading.Lock()
+
+        # 強制リセット用の世代カウンタ（リセット後の古い結果を破棄するため）
+        self._reset_generation: int = 0
+
+        # ダブルタップ検出用の状態
+        self._last_hotkey_release_time: float = 0.0
+        self._last_hotkey_release_slot: Optional[int] = None
+        self._auto_enter_active: bool = False
+        self._double_tap_window_sec: float = 0.4  # 400msのダブルタップ判定ウィンドウ
 
         # ホットキースロットの初期化
         self._hotkey_slots: Dict[int, HotkeySlot] = {}
         self._setup_hotkey_slots()
+        self._api_common_settings = self._get_common_api_settings()
 
         # 現在押されているキー（全スロット共通）
         self._pressed_keys: Set[str] = set()
 
         # スレッド制御
         self._monitoring = True
+        # キーボードリスナーへの参照（停止・再起動のため保持）
+        self._listener: Optional[Any] = None
+        # 録音 start/stop の check-then-set を排他化（並列で start↔stop が競合する race を防ぐ）
+        # ロック順序: _recording_lock を取得した中で _queue_worker_lock を取る（逆順は禁止）
+        self._recording_lock = threading.RLock()
 
     def _setup_hotkey_slots(self) -> None:
-        """両方のホットキースロットを設定する。"""
+        """両方のホットキースロットを設定する。
+
+        既存の API Transcriber インスタンスがあれば先に close() を呼び、
+        Hot reload 時に httpx 接続プールが leak しないようにする。
+        """
+        # 旧 transcriber の HTTP コネクションプールを閉じる
+        for old_slot in self._hotkey_slots.values():
+            old_transcriber = old_slot.api_transcriber
+            if old_transcriber is not None and hasattr(old_transcriber, "close"):
+                try:
+                    old_transcriber.close()
+                except Exception as e:
+                    logger.warning(f"旧 transcriber close 失敗 (slot{old_slot.slot_id}): {e}")
+
         for slot_id in [1, 2]:
             slot_config = self._config.get(f"hotkey{slot_id}", {})
 
             hotkey = slot_config.get("hotkey", f"<f{slot_id + 1}>")
             hotkey_mode = slot_config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
-            backend = slot_config.get("backend", "local")
+            backend = slot_config.get("backend", "openai")
+            if backend not in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]:
+                logger.warning(
+                    f"未対応バックエンド '{backend}' が設定されています。openai にフォールバックします。"
+                )
+                backend = TranscriptionBackend.OPENAI.value
             api_model = slot_config.get("api_model", "")
             api_prompt = slot_config.get("api_prompt", "")
 
@@ -351,9 +328,8 @@ class SuperWhisperApp(QObject):
                 api_prompt=api_prompt,
             )
 
-            # API Transcriberの作成（必要な場合）
-            if backend != "local":
-                slot.api_transcriber = self._create_api_transcriber(slot)
+            # API Transcriberの作成
+            slot.api_transcriber = self._create_api_transcriber(slot)
 
             self._hotkey_slots[slot_id] = slot
             logger.info(f"ホットキースロット{slot_id}: {hotkey} ({hotkey_mode}) -> {backend}")
@@ -384,22 +360,88 @@ class SuperWhisperApp(QObject):
         self._settings_window.activateWindow()
 
     def _quit_app(self) -> None:
-        """アプリケーションを終了する。"""
+        """アプリケーションを終了する。
+
+        キーボードリスナーと録音ストリームを明示的に停止してから Qt を終了する。
+        これを怠るとマイクが OS にロックされたままになる。
+        """
         logger.info("終了中...")
         self._monitoring = False
+
+        # キーボードリスナーを停止（listener.join() のブロックを解除）
+        listener = self._listener
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception as e:
+                logger.warning(f"キーボードリスナー停止失敗: {e}")
+
+        # 録音を停止してマイクを OS に確実に返す
+        try:
+            self._recorder.stop()
+        except Exception as e:
+            logger.warning(f"終了時の録音停止失敗: {e}")
+
         QApplication.quit()
+
+    def force_reset(self) -> None:
+        """
+        全処理を強制停止してidle状態に戻す。
+
+        録音中・文字起こし中の処理をすべて中断し、キューをクリアし、
+        キー押下状態とダブルタップ履歴も完全にクリアする。
+        これにより「Force Reset を押してもキーが押されたまま」状態を解消する。
+
+        並列の start_recording / stop_and_transcribe と直列化するため
+        self._recording_lock を取得する。
+        """
+        logger.info("強制リセットを実行します")
+
+        with self._recording_lock:
+            # 録音状態を解除し、録音中でなくてもストリーム残骸を確実にクリーンアップ
+            self._is_recording = False
+            try:
+                self._recorder.stop()
+            except Exception as e:
+                logger.warning(f"強制リセット時の録音停止失敗: {e}")
+
+            # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
+            self._reset_generation += 1
+
+            # キューをクリア（未処理タスクを破棄）
+            with self._transcription_queue.mutex:
+                self._transcription_queue.queue.clear()
+
+            # 状態フラグをリセット
+            self._active_slot = None
+            self._is_transcribing = False
+            with self._queue_worker_lock:
+                self._queue_worker_running = False
+            self._auto_enter_active = False
+
+            # キー押下状態を強制クリア（取りこぼした on_release を解除）
+            # これがないとリセット後も「キーが押されたまま」と認識され続ける
+            self._pressed_keys.clear()
+            # ダブルタップ検出履歴もクリア（誤発火防止）
+            self._last_hotkey_release_time = 0.0
+            self._last_hotkey_release_slot = None
+
+        # UIをidle状態に戻す
+        self.status_changed.emit("idle")
+        logger.info("強制リセット完了 - idle状態に戻りました")
 
     def _update_ui_status(self, status: str) -> None:
         """UIコンポーネントの状態を更新する。"""
         self._overlay.set_state(status)
         self._tray.set_status(status)
 
-    def _handle_transcription_result(self, text: str) -> None:
+    def _handle_transcription_result(self, text: str, auto_enter: bool = False) -> None:
         """
         文字起こし結果を処理する。
 
         Args:
             text: 文字起こしテキスト
+            auto_enter: Trueの場合、テキスト挿入後にEnterキーを自動送信
         """
         if not text:
             logger.info("テキストが検出されませんでした。")
@@ -414,11 +456,19 @@ class SuperWhisperApp(QObject):
         if dev_mode:
             text = f'"{text}"'
 
-        logger.info(f"結果: {text}")
+        logger.info(f"結果: {text}" + (" [auto_enter]" if auto_enter else ""))
 
         insert_start = time.perf_counter()
         self._input_handler.insert_text(text)
         insert_time = (time.perf_counter() - insert_start) * 1000
+
+        # ダブルタップモード：テキスト挿入後にEnterキーを自動送信
+        if auto_enter:
+            # 設定で調整可能（既定50ms）。一部アプリは即時Enterに反応しないため
+            delay_ms = self._config.get("auto_enter_delay_ms", 50)
+            time.sleep(max(0, delay_ms) / 1000.0)
+            self._input_handler.press_enter()
+            logger.info(f"auto_enter: Enterキーを送信しました (delay={delay_ms}ms)")
 
         # 開発者モード：タイミングをファイルに記録
         if dev_mode:
@@ -469,85 +519,132 @@ class SuperWhisperApp(QObject):
         """
         音声録音を開始する。
 
-        文字起こし中でも新しい録音を許可する。
-        結果はキューに追加され、順番に処理される。
-
         Args:
             slot_id: アクティブなホットキースロットID
         """
-        if self._is_recording or slot_id is None:
-            return
+        with self._recording_lock:
+            if self._is_recording or slot_id is None:
+                return
 
-        self._active_slot = slot_id
-        slot = self._hotkey_slots[slot_id]
+            self._active_slot = slot_id
+            slot = self._hotkey_slots[slot_id]
 
-        logger.info(f"録音開始 (スロット {slot_id}, バックエンド: {slot.backend})")
-        self._is_recording = True
-        self.status_changed.emit("recording")
+            logger.info(f"録音開始 (スロット {slot_id}, バックエンド: {slot.backend})")
 
-        # 使用するTranscriberのモデルをプリロード
-        transcriber = self._get_transcriber_for_slot(slot)
-        threading.Thread(target=transcriber.load_model, daemon=True).start()
-        self._recorder.start()
+            transcriber = self._get_transcriber_for_slot(slot)
+            if transcriber is None:
+                logger.warning(f"スロット{slot_id}のAPIクライアント初期化に失敗したため録音を開始しません。")
+                self._active_slot = None
+                self._show_backend_warning(f"{slot.backend}_unavailable")
+                return
+
+            self._is_recording = True
+            if self._auto_enter_active:
+                self.status_changed.emit("recording_auto_enter")
+            else:
+                self.status_changed.emit("recording")
+
+            # 使用するTranscriberのモデルをプリロード
+            threading.Thread(target=transcriber.load_model, daemon=True).start()
+            self._recorder.start()
 
     def stop_and_transcribe(self) -> None:
         """録音を停止して文字起こしタスクをキューに追加する。"""
-        if not self._is_recording or self._active_slot is None:
-            return
+        with self._recording_lock:
+            if not self._is_recording or self._active_slot is None:
+                return
 
-        logger.info("録音停止")
-        self._is_recording = False
+            logger.info("録音停止")
+            self._is_recording = False
 
-        audio_data = self._recorder.stop()
+            # ダブルタップのauto_enterフラグを取得してリセット
+            auto_enter = self._auto_enter_active
+            self._auto_enter_active = False
+
+            audio_data = self._recorder.stop()
+            active_slot_id = self._active_slot
 
         # 音声データが空の場合
         if len(audio_data) == 0:
-            # キューワーカーが動いていなければidle状態に戻す
             if not self._queue_worker_running:
                 self.status_changed.emit("idle")
             return
 
-        # 開発者モード用: 音声時間を計算
-        audio_duration = len(audio_data) / 16000  # 16kHzサンプリングレート
+        # API 送信前の音声前処理（音量正規化）
+        # 失敗してもアプリは止めず原音で続行。
+        preprocess_cfg = self._config.get("audio_preprocess", {}) or {}
+        try:
+            audio_data = preprocess_audio(
+                audio_data,
+                sample_rate=SAMPLE_RATE,
+                enable_normalize=bool(preprocess_cfg.get("volume_normalize", True)),
+            )
+        except Exception as e:
+            logger.warning(f"音声前処理でエラー、原音を使用: {e}")
+
+        # 開発者モード用に保存
+        audio_duration = len(audio_data) / SAMPLE_RATE
         self._last_audio_duration = audio_duration
 
         # タスクをキューに追加
         task = TranscriptionTask(
             audio_data=audio_data,
-            slot_id=self._active_slot,
-            timestamp=time.perf_counter()
+            slot_id=active_slot_id,
+            timestamp=time.perf_counter(),
+            auto_enter=auto_enter,
         )
         self._transcription_queue.put(task)
 
-        # 処理中状態を表示
+        # 処理中状態を表示（キーを離してもオーバーレイは表示続行）
         self.status_changed.emit("transcribing")
 
-        # ワーカーが動いていなければ開始
-        if not self._queue_worker_running:
-            self._start_queue_worker()
+        # ワーカーが動いていなければ開始（check-and-set はロックで排他化）
+        with self._queue_worker_lock:
+            if not self._queue_worker_running:
+                self._start_queue_worker_locked()
 
-    def _start_queue_worker(self) -> None:
-        """キュー処理ワーカースレッドを開始する。"""
+    def _start_queue_worker_locked(self) -> None:
+        """文字起こしキュー処理ワーカースレッドを開始する。
+
+        呼び出し側が self._queue_worker_lock を取得済みであることを前提とする。
+        """
         self._queue_worker_running = True
         self._is_transcribing = True
         threading.Thread(target=self._queue_processor, daemon=True).start()
 
     def _queue_processor(self) -> None:
-        """キューからタスクを順番に処理するワーカー。"""
+        """キューからタスクを順番に処理するワーカー。
+
+        個別タスクの例外でワーカー全体が死なないよう、各タスク処理を
+        try/except/finally で囲み、必ず task_done() を呼ぶ。
+        """
+        generation = self._reset_generation  # 開始時の世代を記録
         try:
             while True:
                 try:
                     task = self._transcription_queue.get(timeout=0.1)
                 except queue.Empty:
-                    break  # キューが空になったら終了
+                    break
 
-                self._process_transcription_task(task)
-                self._transcription_queue.task_done()
+                try:
+                    self._process_transcription_task(task)
+                except Exception as e:
+                    # タスク単位の例外を吸収してワーカーを止めない
+                    logger.exception(f"文字起こしタスク処理で例外発生: {e}")
+                finally:
+                    try:
+                        self._transcription_queue.task_done()
+                    except ValueError:
+                        # 万一 task_done が多すぎても無視（キューを止めない）
+                        pass
         finally:
-            self._queue_worker_running = False
-            self._is_transcribing = False
-            # キューが空で録音中でなければidle状態に移行
-            if self._transcription_queue.empty() and not self._is_recording:
+            with self._queue_worker_lock:
+                self._queue_worker_running = False
+                self._is_transcribing = False
+            # force_resetで世代が変わっていたらidle emitをスキップ（既にリセット済み）
+            if (self._reset_generation == generation
+                    and self._transcription_queue.empty()
+                    and not self._is_recording):
                 self.status_changed.emit("idle")
 
     def _process_transcription_task(self, task: TranscriptionTask) -> None:
@@ -557,24 +654,35 @@ class SuperWhisperApp(QObject):
         Args:
             task: 処理する文字起こしタスク
         """
+        generation = self._reset_generation  # API呼び出し前の世代を記録
         try:
             slot = self._hotkey_slots[task.slot_id]
             transcriber = self._get_transcriber_for_slot(slot)
+            if transcriber is None:
+                self.text_ready.emit(f"Error: {slot.backend} transcriber is unavailable", False)
+                return
 
             transcribe_start = time.perf_counter()
             text = transcriber.transcribe(task.audio_data)
             transcribe_time = (time.perf_counter() - transcribe_start) * 1000
 
-            # タイミング情報を保存
+            # force_resetが発生していたら結果を破棄
+            if self._reset_generation != generation:
+                logger.info("強制リセットにより文字起こし結果を破棄しました")
+                return
+
+            # 開発者モード用に保存
             self._last_whisper_time = transcribe_time
             self._last_vad_time = getattr(transcriber, 'last_vad_time', 0)
             self._last_whisper_api_time = getattr(transcriber, 'last_api_time', 0)
             self._last_total_time = (time.perf_counter() - task.timestamp) * 1000
 
-            self.text_ready.emit(text)
+            self.text_ready.emit(text, task.auto_enter)
         except Exception as e:
+            if self._reset_generation != generation:
+                return
             logger.error(f"文字起こしエラー: {e}")
-            self.text_ready.emit("")
+            self.text_ready.emit("", False)
 
     # -------------------------------------------------------------------------
     # ホットキー処理
@@ -583,28 +691,49 @@ class SuperWhisperApp(QObject):
 
 
     def _start_keyboard_listener(self) -> None:
-        """両方のホットキースロットを監視するキーボードリスナーを開始する。"""
-        # いずれかのスロットがHoldモードの場合は低レベルリスナーを使用
-        has_hold_mode = any(
-            slot.hotkey_mode == HotkeyMode.HOLD.value
-            for slot in self._hotkey_slots.values()
-        )
+        """両方のホットキースロットを監視するキーボードリスナーを開始する。
 
-        if has_hold_mode:
-            # Hold モードがある場合は低レベルリスナーを使用
-            with keyboard.Listener(
-                on_press=self._handle_key_press,
-                on_release=self._handle_key_release
-            ) as listener:
-                listener.join()
-        else:
-            # 両方Toggleモードの場合はGlobalHotKeysを使用
-            hotkey_map = {}
-            for slot_id, slot in self._hotkey_slots.items():
-                hotkey_map[slot.hotkey] = lambda sid=slot_id: self._on_activate_toggle(sid)
+        リスナーが例外で停止しても自動的に再起動する。
+        外部から self._listener.stop() で停止すると正常終了として扱い、
+        self._monitoring が True なら新しい設定で再起動する（Hot reload 用）。
+        """
+        while self._monitoring:
+            listener = None
+            try:
+                # いずれかのスロットがHoldモードの場合は低レベルリスナーを使用
+                has_hold_mode = any(
+                    slot.hotkey_mode == HotkeyMode.HOLD.value
+                    for slot in self._hotkey_slots.values()
+                )
 
-            with keyboard.GlobalHotKeys(hotkey_map) as h:
-                h.join()
+                if has_hold_mode:
+                    listener = keyboard.Listener(
+                        on_press=self._handle_key_press,
+                        on_release=self._handle_key_release,
+                    )
+                else:
+                    # 両方Toggleモードの場合はGlobalHotKeysを使用
+                    hotkey_map = {}
+                    for slot_id, slot in self._hotkey_slots.items():
+                        hotkey_map[slot.hotkey] = lambda sid=slot_id: self._on_activate_toggle(sid)
+                    listener = keyboard.GlobalHotKeys(hotkey_map)
+
+                self._listener = listener
+                with listener:
+                    listener.join()
+            except Exception as e:
+                # リスナーが例外で死んでも黙って永久停止しないよう必ず再起動
+                logger.error(f"キーボードリスナーが停止しました（{e!r}）。再起動します")
+            finally:
+                self._listener = None
+                # 再起動時に古いキー状態を持ち越さない
+                # （listener 死亡で取りこぼした on_release を強制クリア）
+                self._pressed_keys.clear()
+
+            if not self._monitoring:
+                break
+            # busy-loop 防止（Hot reload 時はほぼ即時に次へ進む）
+            time.sleep(0.5)
 
     def _on_activate_toggle(self, slot_id: int) -> None:
         """
@@ -622,40 +751,71 @@ class SuperWhisperApp(QObject):
         """
         キー押下イベントを処理する。
 
+        ダブルタップ検出：前回のリリースから短時間内に同じスロットの
+        ホットキーが押された場合、auto_enterモードで録音を開始する。
+
         Args:
             key: 押されたキー
         """
         try:
             key_str = self._normalize_key(key)
-            if key_str:
-                self._pressed_keys.add(key_str)
-                # 録音中でなければ、どのスロットのホットキーかチェック
-                if not self._is_recording:
-                    for slot_id, slot in self._hotkey_slots.items():
-                        if self._check_hotkey_match_for_slot(slot):
-                            self.start_recording(slot_id)
-                            break
-        except Exception:
-            pass
+            if key_str is None:
+                # 正規化失敗キーは無視（後で発見できるよう debug ログだけ残す）
+                logger.debug(f"キー正規化に失敗（無視）: {key!r}")
+                return
+
+            self._pressed_keys.add(key_str)
+            # 録音中でなければ、どのスロットのホットキーかチェック
+            if not self._is_recording:
+                for slot_id, slot in self._hotkey_slots.items():
+                    if self._check_hotkey_match_for_slot(slot):
+                        # ダブルタップ検出：同じスロットで短時間内の再押下
+                        now = time.perf_counter()
+                        if (self._last_hotkey_release_slot == slot_id
+                                and (now - self._last_hotkey_release_time) < self._double_tap_window_sec):
+                            self._auto_enter_active = True
+                            logger.info(f"ダブルタップ検出 (スロット{slot_id}) - auto_enterモード")
+                        else:
+                            self._auto_enter_active = False
+                        self.start_recording(slot_id)
+                        break
+        except Exception as e:
+            # ハンドラ内例外を握り潰すとリスナーが止まるため必ず復帰
+            logger.exception(f"キー押下処理で例外: {e}")
 
     def _handle_key_release(self, key: Any) -> None:
         """
         キー解放イベントを処理する。
+
+        ダブルタップ検出のためにリリース時刻とスロットを記録する。
+        正規化失敗で「録音中なのに押下キーが消失」した状態を検出したら、
+        永久録音を防ぐ保険として stop_and_transcribe() を呼ぶ。
 
         Args:
             key: 解放されたキー
         """
         try:
             key_str = self._normalize_key(key)
-            if key_str and key_str in self._pressed_keys:
+            if key_str is None:
+                logger.debug(f"キー正規化に失敗（無視）: {key!r}")
+                # 保険：押下キーが空なのに録音中の場合は停止（永久録音防止）
+                if self._is_recording and not self._pressed_keys:
+                    logger.warning("正規化失敗時に押下キー無し＋録音中を検出 → 安全のため停止")
+                    self.stop_and_transcribe()
+                return
+
+            if key_str in self._pressed_keys:
                 self._pressed_keys.remove(key_str)
-                # ホットキーに含まれるキーが離されたら録音停止
-                if self._is_recording and self._active_slot is not None:
-                    active_slot = self._hotkey_slots[self._active_slot]
-                    if self._is_hotkey_key_released_for_slot(key_str, active_slot):
-                        self.stop_and_transcribe()
-        except Exception:
-            pass
+            # ホットキーに含まれるキーが離されたら録音停止
+            if self._is_recording and self._active_slot is not None:
+                active_slot = self._hotkey_slots[self._active_slot]
+                if self._is_hotkey_key_released_for_slot(key_str, active_slot):
+                    # ダブルタップ検出用にリリース時刻とスロットを記録
+                    self._last_hotkey_release_time = time.perf_counter()
+                    self._last_hotkey_release_slot = self._active_slot
+                    self.stop_and_transcribe()
+        except Exception as e:
+            logger.exception(f"キー解放処理で例外: {e}")
 
     def _is_hotkey_key_released_for_slot(self, key_str: str, slot: HotkeySlot) -> bool:
         """
@@ -701,20 +861,7 @@ class SuperWhisperApp(QObject):
         Returns:
             正規化されたキー文字列、または失敗時None
         """
-        try:
-            if hasattr(key, 'name'):
-                name = key.name.lower()
-                # alt_gr（AltGr/右Alt）をalt_rとして認識
-                if name == 'alt_gr':
-                    return 'alt_r'
-                # 左右の修飾キーはそのまま保持（pynputの名前形式）
-                # これにより <ctrl_l> のような設定が動作する
-                return name
-            elif hasattr(key, 'char') and key.char:
-                return key.char.lower()
-        except Exception:
-            pass
-        return None
+        return self._platform.normalize_listener_key(key)
 
     def _parse_hotkey(self, hotkey_str: str) -> Set[str]:
         """
@@ -788,56 +935,53 @@ class SuperWhisperApp(QObject):
 
     def _apply_config_changes(self) -> None:
         """設定変更を適用する。"""
+        # 入力デバイス設定を更新
+        next_input_device = AudioRecorder.normalize_device_setting(
+            self._config.get("audio_input_device", "default")
+        )
+        if next_input_device != self._current_input_device:
+            self._recorder.set_input_device(next_input_device)
+            self._current_input_device = next_input_device
+            device_label = "default" if next_input_device is None else str(next_input_device)
+            logger.info(f"入力デバイス設定を更新: {device_label}")
+
         # ホットキースロット設定を更新
         slots_changed = False
         for slot_id in [1, 2]:
             slot_config = self._config.get(f"hotkey{slot_id}", {})
             new_hotkey = slot_config.get("hotkey", f"<f{slot_id + 1}>")
             new_mode = slot_config.get("hotkey_mode", HotkeyMode.TOGGLE.value)
-            new_backend = slot_config.get("backend", "local")
+            new_backend = slot_config.get("backend", "openai")
+            if new_backend not in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]:
+                new_backend = TranscriptionBackend.OPENAI.value
+            new_api_model = slot_config.get("api_model", "")
+            new_api_prompt = slot_config.get("api_prompt", "")
 
             current_slot = self._hotkey_slots.get(slot_id)
             if current_slot:
                 if (new_hotkey != current_slot.hotkey or
                     new_mode != current_slot.hotkey_mode or
-                    new_backend != current_slot.backend):
+                    new_backend != current_slot.backend or
+                    new_api_model != current_slot.api_model or
+                    new_api_prompt != current_slot.api_prompt):
                     slots_changed = True
                     logger.info(f"ホットキースロット{slot_id}を更新: {new_hotkey} -> {new_backend}")
 
-        # スロット設定が変更された場合は再初期化
+        # language/VADの共通設定が変わった場合もTranscriberを再作成
+        current_common_settings = self._get_common_api_settings()
+        if current_common_settings != self._api_common_settings:
+            slots_changed = True
+            self._api_common_settings = current_common_settings
+
+        # スロット設定が変更された場合は再初期化＋リスナー再起動
         if slots_changed:
             self._setup_hotkey_slots()
-
-        # ローカルTranscriber設定を更新
-        self._update_local_transcriber_settings()
-
-    def _update_local_transcriber_settings(self) -> None:
-        """ローカルTranscriber設定を更新する。"""
-        if self._local_transcriber is None:
-            return
-
-        local_config = self._config.get("local_backend", {})
-        new_model_size = local_config.get("model_size", "base")
-
-        # model_sizeが変更された場合、モデルをアンロード
-        model_changed = new_model_size != self._local_transcriber.model_size
-        if model_changed:
-            logger.info(f"ローカルモデルサイズ変更: {self._local_transcriber.model_size} -> {new_model_size}")
-            self._local_transcriber.model_size = new_model_size
-            if self._local_transcriber.model is not None:
-                self._local_transcriber.unload_model()
-
-        # 他の設定も更新
-        self._local_transcriber.compute_type = local_config.get("compute_type", "float16")
-        self._local_transcriber.language = self._config.get("language", "ja")
-        self._local_transcriber.release_memory_delay = local_config.get("release_memory_delay", 300)
-        self._local_transcriber.vad_filter = self._config.get("vad_filter", True)
-        self._local_transcriber.vad_min_silence_duration_ms = self._config.get("vad_min_silence_duration_ms", 500)
-        self._local_transcriber.condition_on_previous_text = local_config.get("condition_on_previous_text", False)
-        self._local_transcriber.no_speech_threshold = local_config.get("no_speech_threshold", 0.6)
-        self._local_transcriber.log_prob_threshold = local_config.get("log_prob_threshold", -1.0)
-        self._local_transcriber.no_speech_prob_cutoff = local_config.get("no_speech_prob_cutoff", 0.7)
-        self._local_transcriber.beam_size = local_config.get("beam_size", 5)
-
-        new_cache_dir = local_config.get("model_cache_dir", "")
-        self._local_transcriber.model_cache_dir = new_cache_dir or None
+            # 現在のリスナーを停止すると、_start_keyboard_listener の while ループが
+            # 新しいスロット設定で次のリスナーを起動する（_monitoring=True のため）
+            listener = self._listener
+            if listener is not None:
+                try:
+                    listener.stop()
+                    logger.info("Hot reload: キーボードリスナーを再起動します")
+                except Exception as e:
+                    logger.warning(f"Hot reload 時のリスナー停止失敗: {e}")

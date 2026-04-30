@@ -260,6 +260,8 @@ class DynamicIslandOverlay(QMainWindow):
             self._set_idle_state()
         elif state == AppState.RECORDING:
             self._set_recording_state()
+        elif state == AppState.RECORDING_AUTO_ENTER:
+            self._set_recording_auto_enter_state()
         elif state == AppState.TRANSCRIBING:
             self._set_transcribing_state()
 
@@ -335,6 +337,13 @@ class DynamicIslandOverlay(QMainWindow):
         self._show_overlay()
         self._animate_resize(OVERLAY_EXPANDED_WIDTH, OVERLAY_EXPANDED_HEIGHT)
         self._waveform._active_color = QColor("#34C759")  # Green
+        self._waveform.start_animation()
+
+    def _set_recording_auto_enter_state(self) -> None:
+        """録音状態（auto_enterモード）を設定する。紫色で表示。"""
+        self._show_overlay()
+        self._animate_resize(OVERLAY_EXPANDED_WIDTH, OVERLAY_EXPANDED_HEIGHT)
+        self._waveform._active_color = QColor("#BF40BF")  # Purple
         self._waveform.start_animation()
 
     def _set_transcribing_state(self) -> None:

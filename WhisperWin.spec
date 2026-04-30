@@ -1,13 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+import sys
+
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [('src', 'src')]
 binaries = []
-hiddenimports = [
-    'pynput.keyboard._win32',
-    'pynput.mouse._win32',
-    'tzdata',
-]
+hiddenimports = ['tzdata']
+
+if sys.platform == "darwin":
+    hiddenimports += [
+        'pynput.keyboard._darwin',
+        'pynput.mouse._darwin',
+    ]
+elif sys.platform.startswith("win"):
+    hiddenimports += [
+        'pynput.keyboard._win32',
+        'pynput.mouse._win32',
+    ]
 
 # Collect silero_vad with all its data files
 tmp_ret = collect_all('silero_vad')
@@ -18,32 +27,11 @@ hiddenimports += tmp_ret[2]
 # Also collect silero_vad submodules explicitly
 hiddenimports += collect_submodules('silero_vad')
 
-# Collect faster_whisper  
-tmp_ret = collect_all('faster_whisper')
-datas += tmp_ret[0]
-binaries += tmp_ret[1]
-hiddenimports += tmp_ret[2]
-
-# Collect ctranslate2
-tmp_ret = collect_all('ctranslate2')
-datas += tmp_ret[0]
-binaries += tmp_ret[1]
-hiddenimports += tmp_ret[2]
-
 # Collect PySide6 (only core modules needed)
 tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
-
-# Collect scipy if available
-try:
-    tmp_ret = collect_all('scipy')
-    datas += tmp_ret[0]
-    binaries += tmp_ret[1]
-    hiddenimports += tmp_ret[2]
-except:
-    pass
 
 a = Analysis(
     ['run.py'],
@@ -76,7 +64,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['d:\\project\\WhisperWin\\icon.ico'],
+    icon=['icon.ico'],
 )
 coll = COLLECT(
     exe,

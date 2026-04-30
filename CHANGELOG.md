@@ -2,40 +2,193 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-04-30
+
+### Added
+- **音声前処理パイプライン（音量正規化）**
+  - 新規モジュール `src/core/audio_preprocess.py` を追加
+  - Peak+RMS ハイブリッド音量正規化：目標 RMS = -20 dBFS、ピーク上限 = -3 dBFS（音割れ防止）
+  - 録音直後・API 送信前に適用、numpy のみで <1ms の低レイテンシ
+  - 小さい声を底上げして API 文字起こしの精度を向上、大音量はクリッピング防止のため抑え込み
+  - ノイズ対策は API モデル側に任せる方針（noisereduce 等は採用せず）
+- **Auto Enter Delay スライダーを設定 UI に追加**
+  - ダブルタップ Auto-Enter 機能で、テキスト挿入後から Enter 押下までの待機時間を 0〜500ms で調整可能（`src/ui/settings_window.py`）
+  - 既定値 50ms。一部アプリが即時 Enter に反応しない問題に対するユーザー調整手段（`src/config/constants.py`）
+
+### Changed
+- `DEFAULT_CONFIG` に `audio_preprocess.volume_normalize` キーを追加（既定 True）
+- 設定 UI の Advanced タブに音声前処理セクションを追加
+- `stop_and_transcribe()` で `recorder.stop()` 直後に `preprocess_audio()` を呼ぶよう変更（`src/app.py`）
+
+### Fixed
+- **録音状態の Race Condition 解消（Phase 3）**
+  - `_recording_lock` (RLock) を導入し、`start_recording` / `stop_and_transcribe` / `force_reset` の check-then-set を直列化（`src/app.py`）
+  - 並列スレッドから start/stop が同時に呼ばれた場合に `_is_recording` と `_active_slot` の整合性が崩れる問題を解消
+  - `start_recording` で transcriber 取得失敗時に `_active_slot` をリセットするよう修正（リーク防止）
+  - 6 並列スレッドで 600 回の start/stop を実行しても整合性が保たれることを確認
+  - ロック順序: `_recording_lock` → `_queue_worker_lock` → `recorder._lock`（逆順は禁止、デッドロック防止）
+
+- **プラットフォーム整合性の向上（Phase 2）**
+  - `InputHandler.insert_text` の貼り付けキー操作を `with pressed(...)` から明示的な `try/finally` に変更。`'v'` の release で例外が発生しても修飾キー（Cmd/Ctrl）が確実に解放されるよう改善（`src/core/input_handler.py`）
+  - `OpenAITranscriber` / `GroqTranscriber` に `close()` メソッドを追加し、`unload_model()` から呼び出すよう変更。httpx 接続プールを明示的に閉じてリークを防ぐ（`src/core/openai_transcriber.py`, `src/core/groq_transcriber.py`）
+  - `_setup_hotkey_slots()` の冒頭で旧 `api_transcriber.close()` を呼び、Hot reload 時に旧クライアントの HTTP 接続が leak する問題を解消（`src/app.py`）
+  - `_apply_config_changes()` で slots 変更検出時に `self._listener.stop()` を呼び、自動再起動ループに新設定でリスナーを再立ち上げさせる（`src/app.py`）
+
+- **連打フリーズ問題の根治（マイク占有/キー押下誤認識/Force Reset 効かず）**
+  - `force_reset()` で `_pressed_keys` / `_last_hotkey_release_time` / `_last_hotkey_release_slot` をクリアするよう修正。リセット後も「キーが押されたまま」と誤認識される問題を解消（`src/app.py`）
+  - キーボードリスナー (`_start_keyboard_listener`) を自動復旧ループ化。例外で死んでも黙って永久停止せず、押下キー状態をクリアして再起動する（`src/app.py`）
+  - `_quit_app()` で `listener.stop()` と `recorder.stop()` を明示的に呼ぶよう修正。終了時にマイクが OS にロックされ続ける問題を解消（`src/app.py`）
+  - `AudioRecorder` の `start` / `stop` / `_cleanup_stream` を `threading.RLock` で直列化。`stop` 中に `start` が割り込んで旧ストリームが OS 占有のまま捨てられる競合を解消（`src/core/audio_recorder.py`）
+  - `_cleanup_stream` で `stream.stop()` と `stream.close()` を独立 try/except で囲み、片方が例外を出しても他方を必ず実行するよう修正（`src/core/audio_recorder.py`）
+  - `_queue_processor` の各タスク処理を try/except/finally で囲み、個別タスクの例外でワーカー全体が死なないようにした。`task_done()` も常に呼ぶ（`src/app.py`）
+  - `_queue_worker_running` の check-and-set を `_queue_worker_lock` で排他化し、二重ワーカー起動を防止（`src/app.py`）
+  - `_handle_key_press` / `_handle_key_release` で `_normalize_key` 失敗時の挙動を改善。debug ログ出力＋永久録音を防ぐ保険として「押下キー無し＋録音中」検出時に自動停止（`src/app.py`）
+
+### Technical Details
+- **src/app.py**
+  - `_setup_state` に `_queue_worker_lock` (Lock) と `_listener` 参照保持を追加
+  - `_start_queue_worker` を `_start_queue_worker_locked` にリネーム（呼び出し側がロック取得済み前提）
+  - キーボードリスナー再起動ループにより Hot reload 時のリスナー入れ替えも将来対応可能
+- **src/core/audio_recorder.py**
+  - `__init__` に `threading.RLock` を追加し、ライフサイクル全パスを保護
+  - `start()` 冒頭で残骸ストリームのクリーンアップを実施
+
+---
+
+## [Unreleased] - 2026-04-18
+
+### Added
+- **Auto Enter 遅延調整スライダー**
+  - ダブルタップ時のテキスト挿入後〜Enter押下までの待機時間をUIから調整可能に
+  - Settings の Advanced ページにスライダー（0〜500ms、既定50ms）と現在値ラベルを追加
+  - 即時Enterに反応しないアプリ（Slack、一部Webフォーム等）向けに遅延を伸ばせる
+  - 新規設定キー `auto_enter_delay_ms` を追加（settings.yaml・ホットリロード対応）
+
+### Technical Details
+- **constants.py**: `DEFAULT_CONFIG` に `auto_enter_delay_ms: 50` を追加
+- **settings_window.py**: `QSlider` + `QLabel` を Advanced ページに追加、load/save に反映
+- **app.py**: `_handle_transcription_result()` のハードコード `time.sleep(0.05)` を `self._config.get("auto_enter_delay_ms", 50)` 参照に置換
+
+---
+
+## [Unreleased] - 2026-04-08
+
+### Added
+- **強制リセット機能**
+  - トレイアイコンの右クリックメニューに「Force Reset」を追加
+  - 録音中・文字起こし中の全処理を強制停止してidle状態に復帰
+  - 世代カウンタにより実行中のAPI呼び出し結果も安全に破棄
+
+- **ダブルタップ + ホールドで自動Enterキー送信**
+  - ホールドモードでホットキーをダブルタップ（2回目を長押し）すると、文字起こし結果入力後にEnterキーを自動送信
+  - チャットアプリでの音声入力→送信をワンアクションで完結
+  - ダブルタップ判定ウィンドウ: 400ms
+
+### Technical Details
+- **types.py**: `TranscriptionTask` に `auto_enter` フィールドを追加
+- **input_handler.py**: `press_enter()` メソッドを追加（pynput Key.enter使用）
+- **system_tray.py**: `force_reset` シグナルとメニュー項目を追加
+- **app.py**: `force_reset()` メソッド、世代カウンタ `_reset_generation`、ダブルタップ検出ロジック、`text_ready` シグナルを `Signal(str, bool)` に拡張
+
+---
+
+## [Unreleased] - 2026-02-27
+
+### Added
+- **Cross-platform 抽象レイヤーを追加**
+  - `src/platform/` を新設し、OS差分を `core` から分離
+  - `PlatformAdapter` インターフェースと `get_platform_adapter()` ファクトリを追加
+  - `windows` / `macos` 向けアダプタ実装を追加
+
+- **入力デバイス選択機能を追加**
+  - Settings の Advanced ページでマイク入力デバイスを選択可能
+  - `audio_input_device` 設定キーを追加（`default` / デバイスID）
+  - 録音開始時に指定デバイスを使用し、失敗時は自動でデフォルトへフォールバック
+
+- **運用ドキュメントの追加**
+  - `docs/CROSS_PLATFORM_UNIFICATION_PLAN.md`（統合計画）
+  - `docs/CROSS_PLATFORM_TEST_CHECKLIST.md`（検証チェックリスト）
+  - `run.sh`（macOS/Linux向け起動スクリプト）
+
+### Changed
+- **入力処理を platform 注入方式へ移行**
+  - `src/core/input_handler.py` の `sys.platform` 分岐を削除
+  - 貼り付け修飾キー（Cmd/Ctrl）を platform アダプタで制御
+
+- **録音設定の動的反映を強化**
+  - `settings.yaml` の変更監視で入力デバイス設定の更新を即時適用
+
+- **UI のOS依存ロジックを分離**
+  - `src/ui/settings_window.py` のホットキー変換を platform 経由に変更
+  - `src/ui/system_tray.py` のアクティベーション判定を platform ポリシー化
+  - `src/ui/styles.py` のフォント指定を OS別フォールバック対応に変更
+
+- **アプリ初期化の依存注入を整理**
+  - `src/app.py` で platform アダプタを初期化し、
+    InputHandler / SettingsWindow / SystemTray / キー正規化に注入
+
+### Technical Details
+- **新規追加**
+  - `src/platform/base.py`
+  - `src/platform/factory.py`
+  - `src/platform/common/keymap.py`
+  - `src/platform/windows/adapter.py`
+  - `src/platform/macos/adapter.py`
+
+- **更新**
+  - `src/app.py`
+  - `src/core/input_handler.py`
+  - `src/ui/settings_window.py`
+  - `src/ui/system_tray.py`
+  - `src/ui/styles.py`
+  - `README.md`
+
 ## [Unreleased] - 2026-02-03
 
 ### Added
-- **起動時モデルプリロード機能の実装**
-  - 起動時にVADとWhisperモデルをバックグラウンドでプリロードし、最初の文字起こしを高速化
+- **起動時プリロード機能の実装**
+  - 起動時にVADモデルをバックグラウンドでプリロードし、最初の文字起こしを高速化
   - `preload_on_startup` 設定オプションを追加（デフォルト: true）
-  - ローカルTranscriberの事前ロードメソッド `_preload_local_transcriber()` を実装
-  - 統合プリロードメソッド `_preload_models_async()` でVADとWhisperモデルを並行ロード
-  - ローカルバックエンド使用時のみWhisperモデルをプリロード（VRAM節約）
+  - `app.py` に `_preload_models_async()` を追加
 
 ### Fixed
-- **VADプリロードのタイミングバグを修正**
-  - `_preload_vad_model()` が `_hotkey_slots` 初期化前に呼ばれていた問題を修正
-  - `_setup_core_components()` からVADプリロード呼び出しを削除
-  - `_preload_models_async()` を `_setup_state()` 後に実行するように変更
+- **VADプリロードのタイミング改善**
+  - ホットキースロット初期化後にプリロードを実行するよう調整
+  - 起動順序を `setup_state -> start_background_threads -> preload` に整理
 
 ### Technical Details
-- **src/app.py**:
-  - `_preload_local_transcriber()`: ローカルTranscriberとWhisperモデルを事前ロード
-  - `_preload_models_async()`: 統合プリロードメソッド（VAD + Whisperモデル）
-  - `__init__()`: `_preload_models_async()` 呼び出しを追加
-  - `_setup_core_components()`: `_preload_vad_model()` 呼び出しを削除
-- **src/config/constants.py**:
-  - `DEFAULT_CONFIG` に `preload_on_startup: True` オプションを追加
+- **src/app.py**
+  - `_preload_models_async()` を追加し、設定に応じて非同期プリロードを実行
+  - `_preload_vad_model()` を実行ロジック専用に整理
+- **src/config/constants.py**
+  - `DEFAULT_CONFIG` に `preload_on_startup: true` を追加
 
 ## [Unreleased] - 2026-01-30
 
 ### Added
 - **文字起こしキューイング機能の実装**
-  - 文字起こし処理中に新しい録音を開始した場合、前の処理をキャンセルせずキューに追加
-  - すべての録音結果が順番に処理され、入力される
+  - 文字起こし処理中に新しい録音を開始しても、前タスクを破棄せずキューに追加
+  - すべての録音結果を順番に処理して入力
   - `queue.Queue` を使用したスレッドセーフなタスク管理
-  - `TranscriptionTask` データクラスで音声データ、スロットID、タイムスタンプを保持
+  - `TranscriptionTask` データクラスを追加
 
+### Changed
+- **app.py の文字起こし処理ロジックをキュー方式へ変更**
+  - `start_recording()` からキャンセル方式を削除
+  - `stop_and_transcribe()` でキュー投入
+  - `_start_queue_worker()`, `_queue_processor()`, `_process_transcription_task()` を追加
+  - `_handle_transcription_result()` は結果処理専用にし、idle遷移はワーカー管理へ移行
+
+### Technical Details
+- **src/config/types.py**
+  - `TranscriptionTask` データクラスを追加（audio_data, slot_id, timestamp）
+- **src/app.py**
+  - `_transcription_queue` / `_queue_worker_running` を追加
+  - キュー処理完了時に `idle` へ復帰する制御を追加
+
+## [Unreleased] - 2026-01-15
+
+### Added
 - **CONTRIBUTING.md ドキュメント作成**
   - 詳細なバージョニングルール（X=大きな変更、Y=ユーザーが気づく変更、Z=小さな修正）
   - コミットメッセージ規約（type: description形式）
@@ -96,20 +249,8 @@ WhisperWinの変更履歴を記録するファイルです。
   - バックエンド変更時のAPI Transcriber再作成
   - ローカル設定変更時のモデルアンロード
 
-### Changed
-- **app.py のキューイングロジック変更**
-  - `start_recording()`: キャンセルロジックを削除、文字起こし中でも新しい録音を許可
-  - `stop_and_transcribe()`: タスクを `_transcription_queue` に追加し、ワーカーを起動
-  - `_transcribe_worker()` を削除、代わりに以下を実装:
-    - `_start_queue_worker()`: キュー処理ワーカースレッドを開始
-    - `_queue_processor()`: キューから順番にタスクを取得して処理
-    - `_process_transcription_task()`: 単一タスクの文字起こし処理
-  - `_handle_transcription_result()`: idle状態への移行を削除（ワーカーが管理）
-  - `_setup_state()`: `_cancel_transcription` を削除、キュー関連変数を追加
-
 ### Technical Details
 - **types.py**
-  - `TranscriptionTask` データクラスを追加（audio_data, slot_id, timestamp）
   - `HotkeySlotConfig` データクラスを追加
 
 - **constants.py**

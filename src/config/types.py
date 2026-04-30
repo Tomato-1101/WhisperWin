@@ -7,7 +7,7 @@
 
 from enum import Enum
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 class HotkeyMode(str, Enum):
@@ -22,43 +22,16 @@ class HotkeyMode(str, Enum):
     HOLD = "hold"
 
 
-class ModelSize(str, Enum):
-    """
-    Whisperモデルサイズ。
-    
-    大きいモデルほど精度が高いが、メモリ使用量も増加する。
-    """
-    TINY = "tiny"                     # 最小・最速
-    BASE = "base"                     # 基本
-    SMALL = "small"                   # 小
-    MEDIUM = "medium"                 # 中
-    LARGE = "large"                   # 大
-    LARGE_V2 = "large-v2"             # 大v2
-    LARGE_V3 = "large-v3"             # 大v3（最高精度）
-    DISTIL_LARGE_V2 = "distil-large-v2"      # 蒸留版（高速）
-    DISTIL_MEDIUM_EN = "distil-medium.en"    # 蒸留版（英語特化）
-
-
-class ComputeType(str, Enum):
-    """
-    モデル推論の計算精度タイプ。
-    
-    低精度ほど高速・省メモリだが、精度が若干低下する可能性がある。
-    """
-    FLOAT16 = "float16"           # 16bit浮動小数点（推奨）
-    INT8_FLOAT16 = "int8_float16"  # INT8量子化（より省メモリ）
-    INT8 = "int8"                  # INT8（最も省メモリ）
-
-
 class AppState(str, Enum):
     """
     アプリケーション状態。
     
     UIの表示やシステムトレイアイコンの色に使用される。
     """
-    IDLE = "idle"                  # 待機中
-    RECORDING = "recording"        # 録音中
-    TRANSCRIBING = "transcribing"  # 文字起こし中
+    IDLE = "idle"                                    # 待機中
+    RECORDING = "recording"                          # 録音中
+    RECORDING_AUTO_ENTER = "recording_auto_enter"    # 録音中（auto_enterモード）
+    TRANSCRIBING = "transcribing"                    # 文字起こし中
 
 
 class TranscriptionBackend(str, Enum):
@@ -66,11 +39,9 @@ class TranscriptionBackend(str, Enum):
     文字起こしバックエンドタイプ。
 
     Attributes:
-        LOCAL: ローカルGPU（faster-whisper）
         GROQ: Groq Cloud API
         OPENAI: OpenAI GPT-4o Transcribe API
     """
-    LOCAL = "local"
     GROQ = "groq"
     OPENAI = "openai"
 
@@ -84,31 +55,22 @@ class TranscriptionTask:
         audio_data: 音声データ（NumPy配列）
         slot_id: 使用するホットキースロットID
         timestamp: タスク作成時刻
+        auto_enter: 文字起こし後にEnterキーを自動入力するか
     """
-    audio_data: Any  # npt.NDArray[np.float32]
+    audio_data: Any
     slot_id: int
     timestamp: float
+    auto_enter: bool = False
 
 
 @dataclass
 class TranscriberConfig:
     """
-    文字起こしモジュールの設定。
-
-    ローカルWhisperモデルの各種パラメータを保持する。
+    文字起こしモジュールの共通設定。
     """
-    model_size: str = ModelSize.BASE.value
-    compute_type: str = ComputeType.FLOAT16.value
     language: str = "ja"
-    release_memory_delay: int = 300
     vad_filter: bool = True
     vad_min_silence_duration_ms: int = 500
-    condition_on_previous_text: bool = False
-    no_speech_threshold: float = 0.6
-    log_prob_threshold: float = -1.0
-    no_speech_prob_cutoff: float = 0.7
-    beam_size: int = 5
-    model_cache_dir: str = ""
 
 
 @dataclass
@@ -129,13 +91,13 @@ class HotkeySlotConfig:
     Attributes:
         hotkey: ホットキー文字列（例: "<shift_r>", "<ctrl>+<space>"）
         hotkey_mode: 動作モード（hold/toggle）
-        backend: 使用するバックエンド（local/groq/openai）
+        backend: 使用するバックエンド（groq/openai）
         api_model: APIバックエンド使用時のモデル名
         api_prompt: APIバックエンド使用時のプロンプト
     """
     hotkey: str = "<f2>"
     hotkey_mode: str = HotkeyMode.TOGGLE.value
-    backend: str = TranscriptionBackend.LOCAL.value
+    backend: str = TranscriptionBackend.OPENAI.value
     api_model: str = ""
     api_prompt: str = ""
 
@@ -151,18 +113,9 @@ class AppConfig:
     hotkey: str = "<f2>"
     hotkey_mode: str = HotkeyMode.TOGGLE.value
     
-    # モデル設定
-    model_size: str = ModelSize.BASE.value
-    compute_type: str = ComputeType.FLOAT16.value
+    # 共通設定
     language: str = "ja"
-    model_cache_dir: str = ""
     
     # 文字起こし設定
-    release_memory_delay: int = 300
     vad_filter: bool = True
     vad_min_silence_duration_ms: int = 500
-    condition_on_previous_text: bool = False
-    no_speech_threshold: float = 0.6
-    log_prob_threshold: float = -1.0
-    no_speech_prob_cutoff: float = 0.7
-    beam_size: int = 5

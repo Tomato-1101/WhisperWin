@@ -2,18 +2,15 @@
 設定ウィンドウモジュール
 
 macOSシステム設定風のUIでアプリケーション設定を管理する。
-ホットキー、モデル設定などを提供。
+ホットキーとAPI設定を提供。
 ダーク/ライトテーマ切り替えに対応。
 """
 
-import os
-import math
 from typing import Optional
 
-from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QRectF, QPointF
-from PySide6.QtGui import QKeyEvent, QKeySequence, QPainter, QPainterPath, QColor, QPen, QBrush
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPointF
+from PySide6.QtGui import QKeyEvent, QPainter, QPainterPath, QColor, QPen, QBrush
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -26,15 +23,16 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QSpacerItem,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from ..config import ComputeType, ConfigManager, HotkeyMode, ModelSize, TranscriptionBackend
+from ..config import ConfigManager, HotkeyMode, TranscriptionBackend
+from ..core.audio_recorder import AudioRecorder
+from ..platform import PlatformAdapter, get_platform_adapter
 from .styles import MacTheme
 
 
@@ -149,39 +147,6 @@ class HotkeyInput(QLineEdit):
     修飾キー単独もショートカットとして登録可能。
     """
     
-    # Windows仮想キーコードで左右の修飾キーを区別
-    # https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-    VIRTUAL_KEY_MAPPING = {
-        # 左側の修飾キー
-        0xA2: "<ctrl_l>",   # VK_LCONTROL (162)
-        0xA0: "<shift_l>",  # VK_LSHIFT (160)
-        0xA4: "<alt_l>",    # VK_LMENU (164)
-        0x5B: "<cmd_l>",    # VK_LWIN (91)
-        # 右側の修飾キー
-        0xA3: "<ctrl_r>",   # VK_RCONTROL (163)
-        0xA1: "<shift_r>",  # VK_RSHIFT (161)
-        0xA5: "<alt_r>",    # VK_RMENU (165)
-        0x5C: "<cmd_r>",    # VK_RWIN (92)
-    }
-    
-    # スキャンコードによるフォールバックマッピング
-    # Qtが汎用VK_MENU(18)等を返す場合に使用
-    SCAN_CODE_MAPPING = {
-        # 左側の修飾キー
-        29: "<ctrl_l>",     # Left Ctrl
-        42: "<shift_l>",    # Left Shift
-        56: "<alt_l>",      # Left Alt
-        # 右側の修飾キー（拡張スキャンコード）
-        # Qtは拡張フラグを含んだ値を返すことがある
-        285: "<ctrl_r>",    # Right Ctrl (29 + 256)
-        54: "<shift_r>",    # Right Shift
-        312: "<alt_r>",     # Right Alt (56 + 256)
-        # 特殊なスキャンコード（システム依存）
-        57400: "<alt_r>",   # Right Alt (一部のキーボード/ドライバ)
-        57372: "<ctrl_r>",  # Right Ctrl (一部のキーボード/ドライバ)
-        57373: "<ctrl_r>",  # Right Ctrl (別のスキャンコード)
-    }
-    
     # Qt Keyから基本的な修飾キー種別への変換
     MODIFIER_KEY_MAP = {
         Qt.Key.Key_Control: "ctrl",
@@ -190,9 +155,14 @@ class HotkeyInput(QLineEdit):
         Qt.Key.Key_Meta: "cmd",
     }
     
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        platform_adapter: Optional[PlatformAdapter] = None
+    ):
         """ホットキー入力ウィジェットを初期化する。"""
         super().__init__(parent)
+        self._platform = platform_adapter or get_platform_adapter()
         self.setReadOnly(True)
         self.setPlaceholderText("Click to record shortcut...")
         self._pressed_keys = []  # 押下中のキーを順番に追跡
@@ -220,15 +190,10 @@ class HotkeyInput(QLineEdit):
         Returns:
             pynput形式のキー名、またはマッチしない場合空文字
         """
-        # まず仮想キーコードで判別
-        if virtual_key in self.VIRTUAL_KEY_MAPPING:
-            return self.VIRTUAL_KEY_MAPPING[virtual_key]
-        
-        # フォールバック: スキャンコードで判別
-        if scan_code in self.SCAN_CODE_MAPPING:
-            return self.SCAN_CODE_MAPPING[scan_code]
-        
-        return ""
+        return self._platform.modifier_hotkey_from_native(
+            virtual_key=virtual_key,
+            scan_code=scan_code
+        )
 
     def keyPressEvent(self, event: QKeyEvent):
         """
@@ -301,71 +266,7 @@ class HotkeyInput(QLineEdit):
         Returns:
             pynput形式のキー文字列
         """
-        # 特殊キーのマッピング（ファンクションキー、ナビゲーション、Numpadなど）
-        mapping = {
-            # ファンクションキー F1-F24
-            Qt.Key.Key_F1: "<f1>", Qt.Key.Key_F2: "<f2>", Qt.Key.Key_F3: "<f3>",
-            Qt.Key.Key_F4: "<f4>", Qt.Key.Key_F5: "<f5>", Qt.Key.Key_F6: "<f6>",
-            Qt.Key.Key_F7: "<f7>", Qt.Key.Key_F8: "<f8>", Qt.Key.Key_F9: "<f9>",
-            Qt.Key.Key_F10: "<f10>", Qt.Key.Key_F11: "<f11>", Qt.Key.Key_F12: "<f12>",
-            Qt.Key.Key_F13: "<f13>", Qt.Key.Key_F14: "<f14>", Qt.Key.Key_F15: "<f15>",
-            Qt.Key.Key_F16: "<f16>", Qt.Key.Key_F17: "<f17>", Qt.Key.Key_F18: "<f18>",
-            Qt.Key.Key_F19: "<f19>", Qt.Key.Key_F20: "<f20>", Qt.Key.Key_F21: "<f21>",
-            Qt.Key.Key_F22: "<f22>", Qt.Key.Key_F23: "<f23>", Qt.Key.Key_F24: "<f24>",
-            
-            # 特殊キー
-            Qt.Key.Key_Space: "<space>",
-            Qt.Key.Key_Tab: "<tab>",
-            Qt.Key.Key_Return: "<enter>",
-            Qt.Key.Key_Enter: "<enter>",
-            Qt.Key.Key_Backspace: "<backspace>",
-            Qt.Key.Key_Delete: "<delete>",
-            Qt.Key.Key_Escape: "<esc>",
-            Qt.Key.Key_CapsLock: "<caps_lock>",
-            Qt.Key.Key_NumLock: "<num_lock>",
-            Qt.Key.Key_ScrollLock: "<scroll_lock>",
-            Qt.Key.Key_Pause: "<pause>",
-            Qt.Key.Key_Print: "<print_screen>",
-            Qt.Key.Key_SysReq: "<print_screen>",
-            
-            # ナビゲーションキー
-            Qt.Key.Key_Home: "<home>",
-            Qt.Key.Key_End: "<end>",
-            Qt.Key.Key_PageUp: "<page_up>",
-            Qt.Key.Key_PageDown: "<page_down>",
-            Qt.Key.Key_Up: "<up>",
-            Qt.Key.Key_Down: "<down>",
-            Qt.Key.Key_Left: "<left>",
-            Qt.Key.Key_Right: "<right>",
-            Qt.Key.Key_Insert: "<insert>",
-            
-            # テンキー
-            Qt.Key.Key_division: "<num_divide>",
-            Qt.Key.Key_multiply: "<num_multiply>",
-            Qt.Key.Key_Minus: "<num_subtract>",
-            Qt.Key.Key_Plus: "<num_add>",
-            
-            # メディアキー
-            Qt.Key.Key_MediaPlay: "<media_play_pause>",
-            Qt.Key.Key_MediaStop: "<media_stop>",
-            Qt.Key.Key_MediaPrevious: "<media_previous>",
-            Qt.Key.Key_MediaNext: "<media_next>",
-            Qt.Key.Key_VolumeUp: "<media_volume_up>",
-            Qt.Key.Key_VolumeDown: "<media_volume_down>",
-            Qt.Key.Key_VolumeMute: "<media_volume_mute>",
-        }
-        
-        if key in mapping:
-            return mapping[key]
-        
-        # キーボードの記号キー
-        text = QKeySequence(key).toString().lower()
-        if not text:
-            return ""
-        if len(text) == 1:
-            return text
-        else:
-            return f"<{text}>"
+        return self._platform.qt_key_to_hotkey_token(key, scan_code)
 
 
 class SettingsWindow(QWidget):
@@ -373,12 +274,13 @@ class SettingsWindow(QWidget):
     アプリケーション設定ウィンドウ。
     
     macOSシステム設定風のサイドバーナビゲーションUIを提供し、
-    General/Model/Advancedの3つのページで設定を管理する。
+    General/Advancedの2つのページで設定を管理する。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, platform_adapter: Optional[PlatformAdapter] = None) -> None:
         """設定ウィンドウを初期化する。"""
         super().__init__()
+        self._platform = platform_adapter or get_platform_adapter()
 
         self._config_manager = ConfigManager()
         
@@ -465,7 +367,6 @@ class SettingsWindow(QWidget):
     def _setup_pages(self) -> None:
         """各設定ページを作成してスタックに追加する。"""
         self._add_page("General", self._create_general_page())
-        self._add_page("Model", self._create_model_page())
         self._add_page("Advanced", self._create_advanced_page())
 
         # 最初のページを選択
@@ -540,7 +441,7 @@ class SettingsWindow(QWidget):
         layout.setSpacing(12)
 
         # ホットキー入力
-        hotkey_input = HotkeyInput()
+        hotkey_input = HotkeyInput(platform_adapter=self._platform)
         setattr(self, f"_hotkey{slot_id}_input", hotkey_input)
         layout.addRow("Shortcut:", hotkey_input)
 
@@ -553,7 +454,6 @@ class SettingsWindow(QWidget):
         # バックエンド選択
         backend_combo = QComboBox()
         backend_combo.addItems([
-            TranscriptionBackend.LOCAL.value,
             TranscriptionBackend.GROQ.value,
             TranscriptionBackend.OPENAI.value
         ])
@@ -599,35 +499,6 @@ class SettingsWindow(QWidget):
         widget.setVisible(False)  # 初期状態は非表示
         return widget
 
-    def _create_model_page(self) -> QWidget:
-        """Modelページを作成する（ローカルバックエンド共通設定）。"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(20)
-
-        # 説明ラベル
-        desc = QLabel("ローカルGPU設定は両方のホットキーで共通です。\nAPI設定は各ホットキーの「General」ページで設定します。")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        # ローカル設定グループ
-        local_group = QGroupBox("Local Engine Settings (GPU - 共通)")
-        local_layout = QFormLayout()
-
-        self._model_combo = QComboBox()
-        self._model_combo.addItems([m.value for m in ModelSize])
-        local_layout.addRow("Model Size:", self._model_combo)
-
-        self._compute_combo = QComboBox()
-        self._compute_combo.addItems([c.value for c in ComputeType])
-        local_layout.addRow("Compute Type:", self._compute_combo)
-
-        local_group.setLayout(local_layout)
-        layout.addWidget(local_group)
-
-        layout.addStretch()
-        return page
-
     def _create_advanced_page(self) -> QWidget:
         """Advancedページを作成する。"""
         page = QWidget()
@@ -638,13 +509,93 @@ class SettingsWindow(QWidget):
         self._vad_check = QCheckBox("Enable VAD")
         layout.addRow("", self._vad_check)
 
-        # メモリ解放遅延
-        self._memory_spin = QSpinBox()
-        self._memory_spin.setRange(0, 3600)
-        self._memory_spin.setSuffix(" sec")
-        layout.addRow("Release Memory Delay:", self._memory_spin)
+        # VAD最小無音時間
+        self._vad_silence_spin = QSpinBox()
+        self._vad_silence_spin.setRange(100, 5000)
+        self._vad_silence_spin.setSingleStep(50)
+        self._vad_silence_spin.setSuffix(" ms")
+        layout.addRow("VAD Min Silence:", self._vad_silence_spin)
+
+        # Auto Enter 遅延（ダブルタップ時、テキスト挿入後のEnter押下までの待機時間）
+        # 一部アプリが即時Enterに反応しないため、ユーザー側で調整可能にする
+        self._auto_enter_delay_slider = QSlider(Qt.Orientation.Horizontal)
+        self._auto_enter_delay_slider.setRange(0, 500)
+        self._auto_enter_delay_slider.setSingleStep(10)
+        self._auto_enter_delay_slider.setPageStep(50)
+        self._auto_enter_delay_slider.setMinimumWidth(240)
+
+        self._auto_enter_delay_label = QLabel("50 ms")
+        self._auto_enter_delay_label.setMinimumWidth(56)
+        self._auto_enter_delay_slider.valueChanged.connect(
+            lambda v: self._auto_enter_delay_label.setText(f"{v} ms")
+        )
+
+        delay_row = QWidget()
+        delay_row_layout = QHBoxLayout(delay_row)
+        delay_row_layout.setContentsMargins(0, 0, 0, 0)
+        delay_row_layout.setSpacing(8)
+        delay_row_layout.addWidget(self._auto_enter_delay_slider)
+        delay_row_layout.addWidget(self._auto_enter_delay_label)
+        layout.addRow("Auto Enter Delay:", delay_row)
+
+        # 入力デバイス
+        self._input_device_combo = QComboBox()
+        self._input_device_combo.setMinimumWidth(320)
+
+        refresh_button = QPushButton("Refresh")
+        refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_button.clicked.connect(self._populate_input_devices)
+
+        device_row = QWidget()
+        device_row_layout = QHBoxLayout(device_row)
+        device_row_layout.setContentsMargins(0, 0, 0, 0)
+        device_row_layout.setSpacing(8)
+        device_row_layout.addWidget(self._input_device_combo)
+        device_row_layout.addWidget(refresh_button)
+
+        layout.addRow("Input Device:", device_row)
+
+        # 音声前処理（API送信前）：Peak+RMS ハイブリッド音量正規化
+        # ノイズ対策は API モデル側に任せ、ここでは小音量を持ち上げて音割れを防ぐのみ
+        self._volume_normalize_check = QCheckBox("Volume Normalization (Peak+RMS)")
+        layout.addRow("Audio Preprocess:", self._volume_normalize_check)
+
+        preprocess_hint = QLabel("小さい声を底上げし、音割れしない範囲でゲイン調整します")
+        preprocess_hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addRow("", preprocess_hint)
 
         return page
+
+    def _populate_input_devices(self) -> None:
+        """入力デバイス一覧をコンボボックスへ読み込む。"""
+        current_value = "default"
+        if hasattr(self, "_input_device_combo") and self._input_device_combo.count() > 0:
+            current_data = self._input_device_combo.currentData()
+            if current_data is not None:
+                current_value = current_data
+
+        self._input_device_combo.clear()
+        self._input_device_combo.addItem("System Default", "default")
+
+        devices = AudioRecorder.list_input_devices()
+        for device in devices:
+            device_id = int(device["id"])
+            label = f"{device_id}: {device['label']}"
+            self._input_device_combo.addItem(label, device_id)
+
+        self._set_input_device_selection(current_value)
+
+    def _set_input_device_selection(self, value) -> None:
+        """入力デバイス選択を設定値に合わせる。"""
+        normalized = AudioRecorder.normalize_device_setting(value)
+        target_value = "default" if normalized is None else normalized
+
+        for index in range(self._input_device_combo.count()):
+            if self._input_device_combo.itemData(index) == target_value:
+                self._input_device_combo.setCurrentIndex(index)
+                return
+
+        self._input_device_combo.setCurrentIndex(0)
 
     def _load_current_settings(self) -> None:
         """設定ファイルから現在の値をUIに読み込む。"""
@@ -657,24 +608,32 @@ class SettingsWindow(QWidget):
         hotkey1_config = config.get("hotkey1", {})
         self._hotkey1_input.setText(hotkey1_config.get("hotkey", "<f2>"))
         self._mode1_combo.setCurrentText(hotkey1_config.get("hotkey_mode", HotkeyMode.TOGGLE.value))
-        self._backend1_combo.setCurrentText(hotkey1_config.get("backend", "local"))
+        backend1 = hotkey1_config.get("backend", "openai")
+        if backend1 not in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]:
+            backend1 = TranscriptionBackend.OPENAI.value
+        self._backend1_combo.setCurrentText(backend1)
         self._api1_prompt_input.setText(hotkey1_config.get("api_prompt", ""))
 
         # General - ホットキー2
         hotkey2_config = config.get("hotkey2", {})
         self._hotkey2_input.setText(hotkey2_config.get("hotkey", "<f3>"))
         self._mode2_combo.setCurrentText(hotkey2_config.get("hotkey_mode", HotkeyMode.TOGGLE.value))
-        self._backend2_combo.setCurrentText(hotkey2_config.get("backend", "local"))
+        backend2 = hotkey2_config.get("backend", "groq")
+        if backend2 not in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]:
+            backend2 = TranscriptionBackend.GROQ.value
+        self._backend2_combo.setCurrentText(backend2)
         self._api2_prompt_input.setText(hotkey2_config.get("api_prompt", ""))
-
-        # Model - ローカル共通設定
-        local_config = config.get("local_backend", {})
-        self._model_combo.setCurrentText(local_config.get("model_size", ModelSize.BASE.value))
-        self._compute_combo.setCurrentText(local_config.get("compute_type", ComputeType.FLOAT16.value))
 
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
-        self._memory_spin.setValue(local_config.get("release_memory_delay", 300))
+        self._vad_silence_spin.setValue(config.get("vad_min_silence_duration_ms", 500))
+        self._auto_enter_delay_slider.setValue(config.get("auto_enter_delay_ms", 50))
+        self._populate_input_devices()
+        self._set_input_device_selection(config.get("audio_input_device", "default"))
+
+        # 音声前処理（音量正規化のみ）
+        preprocess_cfg = config.get("audio_preprocess", {}) or {}
+        self._volume_normalize_check.setChecked(bool(preprocess_cfg.get("volume_normalize", True)))
 
         # APIモデルとバックエンド表示状態を初期化
         for slot_id in [1, 2]:
@@ -687,7 +646,7 @@ class SettingsWindow(QWidget):
 
         Args:
             slot_id: スロットID（1または2）
-            backend: 選択されたバックエンド（"local", "groq", または "openai"）
+            backend: 選択されたバックエンド（"groq" または "openai"）
         """
         is_api = backend in [TranscriptionBackend.GROQ.value, TranscriptionBackend.OPENAI.value]
 
@@ -743,24 +702,21 @@ class SettingsWindow(QWidget):
         # 既存のdev_mode, llm_postprocess設定を保持
         existing_dev_mode = self._config_manager.get("dev_mode", False)
         existing_llm_postprocess = self._config_manager.get("llm_postprocess", {})
+        selected_input_device = self._input_device_combo.currentData()
+        if selected_input_device is None:
+            selected_input_device = "default"
 
         new_config = {
             # グローバル設定
             "language": self._lang_input.text(),
             "vad_filter": self._vad_check.isChecked(),
-            "vad_min_silence_duration_ms": self._config_manager.get("vad_min_silence_duration_ms", 500),
+            "vad_min_silence_duration_ms": self._vad_silence_spin.value(),
+            "audio_input_device": selected_input_device,
+            "auto_enter_delay_ms": self._auto_enter_delay_slider.value(),
 
-            # ローカルバックエンド設定（共通）
-            "local_backend": {
-                "model_size": self._model_combo.currentText(),
-                "compute_type": self._compute_combo.currentText(),
-                "release_memory_delay": self._memory_spin.value(),
-                "condition_on_previous_text": self._config_manager.get("local_backend", {}).get("condition_on_previous_text", False),
-                "no_speech_threshold": self._config_manager.get("local_backend", {}).get("no_speech_threshold", 0.6),
-                "log_prob_threshold": self._config_manager.get("local_backend", {}).get("log_prob_threshold", -1.0),
-                "no_speech_prob_cutoff": self._config_manager.get("local_backend", {}).get("no_speech_prob_cutoff", 0.7),
-                "beam_size": self._config_manager.get("local_backend", {}).get("beam_size", 5),
-                "model_cache_dir": self._config_manager.get("local_backend", {}).get("model_cache_dir", ""),
+            # 音声前処理（音量正規化のみ）
+            "audio_preprocess": {
+                "volume_normalize": self._volume_normalize_check.isChecked(),
             },
 
             # ホットキー1 設定
@@ -768,7 +724,7 @@ class SettingsWindow(QWidget):
                 "hotkey": self._hotkey1_input.text(),
                 "hotkey_mode": self._mode1_combo.currentText(),
                 "backend": self._backend1_combo.currentText(),
-                "api_model": self._api1_model_combo.currentText() if self._backend1_combo.currentText() != "local" else "",
+                "api_model": self._api1_model_combo.currentText(),
                 "api_prompt": self._api1_prompt_input.text(),
             },
 
@@ -777,7 +733,7 @@ class SettingsWindow(QWidget):
                 "hotkey": self._hotkey2_input.text(),
                 "hotkey_mode": self._mode2_combo.currentText(),
                 "backend": self._backend2_combo.currentText(),
-                "api_model": self._api2_model_combo.currentText() if self._backend2_combo.currentText() != "local" else "",
+                "api_model": self._api2_model_combo.currentText(),
                 "api_prompt": self._api2_prompt_input.text(),
             },
 
