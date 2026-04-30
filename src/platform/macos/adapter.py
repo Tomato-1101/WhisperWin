@@ -8,8 +8,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QSystemTrayIcon
 from pynput.keyboard import Key
 
+from ...utils.logger import get_logger
 from ..base import PlatformAdapter
 from ..common import normalize_listener_key, qt_key_to_hotkey_token
+
+logger = get_logger(__name__)
 
 
 class MacOSPlatformAdapter(PlatformAdapter):
@@ -77,3 +80,47 @@ class MacOSPlatformAdapter(PlatformAdapter):
 
     def qt_key_to_hotkey_token(self, key: int, scan_code: int = 0) -> str:
         return qt_key_to_hotkey_token(key, scan_code)
+
+    # --- ウィンドウ可視性制御（macOS 固有） ---
+
+    def configure_app_visibility(self, hide_from_dock: bool) -> None:
+        """
+        Dock / Cmd+Tab からアプリを隠す（Accessory モード）。
+
+        メニューバー常駐型アプリとして動作させたい場合に True を渡す。
+        PyInstaller ビルド版は Info.plist の `LSUIElement=true` で起動時から
+        この状態になるが、`python run.py` で開発実行する場合は本メソッドで
+        ランタイムにポリシーを変更する必要がある。
+        """
+        if not hide_from_dock:
+            return
+        try:
+            # ローカルインポート: pyobjc は macOS でしか入らないため、
+            # モジュールロード時に失敗しないよう呼び出し時に import する。
+            from AppKit import NSApp, NSApplicationActivationPolicyAccessory  # type: ignore
+        except Exception as e:
+            logger.warning(f"AppKit を import できないため Dock 非表示を適用しません: {e}")
+            return
+        try:
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            logger.debug("macOS Activation Policy を Accessory に設定しました")
+        except Exception as e:
+            logger.warning(f"Activation Policy 変更に失敗: {e}")
+
+    def bring_to_front(self, window) -> None:
+        """
+        メニューバーから設定を開いた時に確実に前面化する。
+
+        Accessory モードでは `raise_()` / `activateWindow()` だけでは
+        他アプリの上に出ないことがあるため、AppKit 経由で
+        `activateIgnoringOtherApps_(True)` を呼ぶ。
+        """
+        try:
+            from AppKit import NSApp  # type: ignore
+        except Exception as e:
+            logger.debug(f"AppKit 不在のため bring_to_front をスキップ: {e}")
+            return
+        try:
+            NSApp.activateIgnoringOtherApps_(True)
+        except Exception as e:
+            logger.warning(f"NSApp.activateIgnoringOtherApps_ 失敗: {e}")

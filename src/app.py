@@ -21,7 +21,7 @@ from .config.types import TranscriptionTask
 from .core import AudioRecorder, GroqTranscriber, InputHandler, OpenAITranscriber
 from .core.audio_preprocess import preprocess as preprocess_audio
 from .platform import get_platform_adapter
-from .ui import DynamicIslandOverlay, SettingsWindow, SystemTray
+from .ui import SettingsWindow, SystemTray
 from .utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -96,9 +96,6 @@ class SuperWhisperApp(QObject):
         initial_input_device = self._config.get("audio_input_device", "default")
         self._recorder = AudioRecorder(input_device=initial_input_device)
         self._current_input_device = AudioRecorder.normalize_device_setting(initial_input_device)
-
-        # 音声レベルコールバックを設定（波形アニメーション用）
-        self._recorder.set_level_callback(self._on_audio_level)
 
         self._input_handler = InputHandler(platform_adapter=self._platform)
 
@@ -178,21 +175,18 @@ class SuperWhisperApp(QObject):
 
     def _show_backend_warning(self, warning_type: str) -> None:
         """
-        バックエンド問題についてユーザーに警告を表示する。
+        バックエンドの利用不可をログとトレイのツールチップで通知する。
 
-        Args:
-            warning_type: 警告タイプ（"groq_unavailable", "openai_unavailable"等）
+        以前は Dynamic Island オーバーレイにメッセージを浮かべていたが、
+        オーバーレイ廃止に伴いログ出力のみに変更。状態自体はトレイアイコンの
+        色（IDLE 青 / RECORDING 赤 等）で判別できる。
         """
         messages = {
-            "groq_unavailable": "Groq API unavailable\nCheck GROQ_API_KEY",
-            "openai_unavailable": "OpenAI API unavailable\nCheck OPENAI_API_KEY",
+            "groq_unavailable": "Groq API unavailable - GROQ_API_KEY または Keychain を確認してください",
+            "openai_unavailable": "OpenAI API unavailable - OPENAI_API_KEY または Keychain を確認してください",
         }
-        message = messages.get(warning_type, "API unavailable")
-        self._overlay.show_temporary_message(
-            message,
-            duration_ms=3000,
-            is_error=False
-        )
+        message = messages.get(warning_type, f"API unavailable: {warning_type}")
+        logger.warning(message)
 
     def _preload_vad_model(self) -> None:
         """
@@ -223,26 +217,12 @@ class SuperWhisperApp(QObject):
 
     def _setup_ui_components(self) -> None:
         """UIコンポーネントを初期化する。"""
-        self._overlay = DynamicIslandOverlay()
         self._settings_window = SettingsWindow(platform_adapter=self._platform)
         self._tray = SystemTray(platform_adapter=self._platform)
-
-    def _on_audio_level(self, level: float, has_voice: bool) -> None:
-        """
-        音声レベルコールバック。録音中の音声レベルを受け取る。
-        
-        Args:
-            level: 正規化された音声レベル（0.0-1.0）
-            has_voice: 音声が検出されている場合True
-        """
-        # オーバーレイの波形に音声検出状態を伝達
-        if self._is_recording and hasattr(self._overlay, 'set_voice_active'):
-            self._overlay.set_voice_active(has_voice)
 
     def _setup_signals(self) -> None:
         """シグナルをスロットに接続する。"""
         self._tray.open_settings.connect(self._open_settings)
-        self._tray.force_reset.connect(self.force_reset)
         self._tray.quit_app.connect(self._quit_app)
         self.status_changed.connect(self._update_ui_status)
         self.text_ready.connect(self._handle_transcription_result)
@@ -258,9 +238,6 @@ class SuperWhisperApp(QObject):
         self._queue_worker_running = False
         # ワーカー起動の check-and-set を排他化（二重ワーカー起動を防ぐ）
         self._queue_worker_lock = threading.Lock()
-
-        # 強制リセット用の世代カウンタ（リセット後の古い結果を破棄するため）
-        self._reset_generation: int = 0
 
         # ダブルタップ検出用の状態
         self._last_hotkey_release_time: float = 0.0
@@ -355,9 +332,21 @@ class SuperWhisperApp(QObject):
     # -------------------------------------------------------------------------
 
     def _open_settings(self) -> None:
-        """設定ウィンドウを開く。"""
-        self._settings_window.show()
-        self._settings_window.activateWindow()
+        """設定ウィンドウを開く。
+
+        macOS の Accessory モードでは Qt 標準の `show()` だけでは前面化しない
+        ことがあるため、最小化からの復帰・raise_/activate を経由して、最後に
+        プラットフォーム固有処理（macOS は `NSApp.activateIgnoringOtherApps_`）
+        で他アプリの上に確実に出す。
+        """
+        win = self._settings_window
+        if win.isMinimized():
+            win.showNormal()
+        else:
+            win.show()
+        win.raise_()
+        win.activateWindow()
+        self._platform.bring_to_front(win)
 
     def _quit_app(self) -> None:
         """アプリケーションを終了する。
@@ -384,55 +373,8 @@ class SuperWhisperApp(QObject):
 
         QApplication.quit()
 
-    def force_reset(self) -> None:
-        """
-        全処理を強制停止してidle状態に戻す。
-
-        録音中・文字起こし中の処理をすべて中断し、キューをクリアし、
-        キー押下状態とダブルタップ履歴も完全にクリアする。
-        これにより「Force Reset を押してもキーが押されたまま」状態を解消する。
-
-        並列の start_recording / stop_and_transcribe と直列化するため
-        self._recording_lock を取得する。
-        """
-        logger.info("強制リセットを実行します")
-
-        with self._recording_lock:
-            # 録音状態を解除し、録音中でなくてもストリーム残骸を確実にクリーンアップ
-            self._is_recording = False
-            try:
-                self._recorder.stop()
-            except Exception as e:
-                logger.warning(f"強制リセット時の録音停止失敗: {e}")
-
-            # 世代カウンタをインクリメント（実行中のAPI結果を破棄するため）
-            self._reset_generation += 1
-
-            # キューをクリア（未処理タスクを破棄）
-            with self._transcription_queue.mutex:
-                self._transcription_queue.queue.clear()
-
-            # 状態フラグをリセット
-            self._active_slot = None
-            self._is_transcribing = False
-            with self._queue_worker_lock:
-                self._queue_worker_running = False
-            self._auto_enter_active = False
-
-            # キー押下状態を強制クリア（取りこぼした on_release を解除）
-            # これがないとリセット後も「キーが押されたまま」と認識され続ける
-            self._pressed_keys.clear()
-            # ダブルタップ検出履歴もクリア（誤発火防止）
-            self._last_hotkey_release_time = 0.0
-            self._last_hotkey_release_slot = None
-
-        # UIをidle状態に戻す
-        self.status_changed.emit("idle")
-        logger.info("強制リセット完了 - idle状態に戻りました")
-
     def _update_ui_status(self, status: str) -> None:
         """UIコンポーネントの状態を更新する。"""
-        self._overlay.set_state(status)
         self._tray.set_status(status)
 
     def _handle_transcription_result(self, text: str, auto_enter: bool = False) -> None:
@@ -618,7 +560,6 @@ class SuperWhisperApp(QObject):
         個別タスクの例外でワーカー全体が死なないよう、各タスク処理を
         try/except/finally で囲み、必ず task_done() を呼ぶ。
         """
-        generation = self._reset_generation  # 開始時の世代を記録
         try:
             while True:
                 try:
@@ -641,10 +582,7 @@ class SuperWhisperApp(QObject):
             with self._queue_worker_lock:
                 self._queue_worker_running = False
                 self._is_transcribing = False
-            # force_resetで世代が変わっていたらidle emitをスキップ（既にリセット済み）
-            if (self._reset_generation == generation
-                    and self._transcription_queue.empty()
-                    and not self._is_recording):
+            if self._transcription_queue.empty() and not self._is_recording:
                 self.status_changed.emit("idle")
 
     def _process_transcription_task(self, task: TranscriptionTask) -> None:
@@ -654,7 +592,6 @@ class SuperWhisperApp(QObject):
         Args:
             task: 処理する文字起こしタスク
         """
-        generation = self._reset_generation  # API呼び出し前の世代を記録
         try:
             slot = self._hotkey_slots[task.slot_id]
             transcriber = self._get_transcriber_for_slot(slot)
@@ -666,11 +603,6 @@ class SuperWhisperApp(QObject):
             text = transcriber.transcribe(task.audio_data)
             transcribe_time = (time.perf_counter() - transcribe_start) * 1000
 
-            # force_resetが発生していたら結果を破棄
-            if self._reset_generation != generation:
-                logger.info("強制リセットにより文字起こし結果を破棄しました")
-                return
-
             # 開発者モード用に保存
             self._last_whisper_time = transcribe_time
             self._last_vad_time = getattr(transcriber, 'last_vad_time', 0)
@@ -679,8 +611,6 @@ class SuperWhisperApp(QObject):
 
             self.text_ready.emit(text, task.auto_enter)
         except Exception as e:
-            if self._reset_generation != generation:
-                return
             logger.error(f"文字起こしエラー: {e}")
             self.text_ready.emit("", False)
 

@@ -29,7 +29,6 @@ class SystemTray(QSystemTrayIcon):
     
     # メニューアクション用シグナル
     open_settings = Signal()
-    force_reset = Signal()
     quit_app = Signal()
     
     # 状態別アイコンカラー
@@ -51,11 +50,13 @@ class SystemTray(QSystemTrayIcon):
         """システムトレイアイコンを初期化する。"""
         super().__init__(parent)
         self._platform = platform_adapter or get_platform_adapter()
-        
+
         self._setup_icon()
         self._setup_menu()
-        self._setup_click_handler()
-        
+        # トレイアイコンの左クリックで直接 Settings を開かない仕様に変更。
+        # 左クリックでは setContextMenu で登録したメニューを表示するのみで、
+        # ユーザーがメニューから「Settings」を選んだ時に初めてウィンドウを開く。
+
         self.show()
 
     def _setup_icon(self) -> None:
@@ -65,39 +66,18 @@ class SystemTray(QSystemTrayIcon):
     def _setup_menu(self) -> None:
         """コンテキストメニューを設定する。"""
         self._menu = QMenu()
-        
+
         # 設定メニュー項目
         settings_action = self._menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings.emit)
 
         self._menu.addSeparator()
 
-        # 強制リセットメニュー項目
-        reset_action = self._menu.addAction("Force Reset")
-        reset_action.triggered.connect(self.force_reset.emit)
-
-        self._menu.addSeparator()
-
         # 終了メニュー項目
         quit_action = self._menu.addAction("Quit")
         quit_action.triggered.connect(self.quit_app.emit)
-        
+
         self.setContextMenu(self._menu)
-
-    def _setup_click_handler(self) -> None:
-        """クリックハンドラーを設定する。"""
-        self.activated.connect(self._on_activated)
-
-    def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        """
-        トレイアイコンのアクティベーションを処理する。
-        
-        Args:
-            reason: アクティベーションの種類（クリック、ダブルクリック等）
-        """
-        if self._platform.is_tray_open_reason(reason):
-            # macOSではダブルクリックが来る場合があるため両方を許可
-            self.open_settings.emit()
 
     def set_status(self, status: Union[str, AppState]) -> None:
         """

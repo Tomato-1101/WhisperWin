@@ -17,6 +17,7 @@ import numpy.typing as npt
 
 from .audio_utils import numpy_to_audio_bytes
 from ..config.constants import SAMPLE_RATE
+from ..utils import secrets
 from ..utils.logger import get_logger
 from .vad import VadFilter
 
@@ -104,6 +105,16 @@ class OpenAITranscriber:
                 f"推奨モデル: {', '.join(self.AVAILABLE_MODELS)}"
             )
 
+    @staticmethod
+    def _resolve_api_key() -> Optional[str]:
+        """
+        API キーを Keychain → 環境変数 の優先順で解決する。
+
+        macOS Keychain / Windows Credential Manager に保存された値を最優先で使い、
+        無ければ既存の `OPENAI_API_KEY` 環境変数にフォールバックする。
+        """
+        return secrets.get_api_key(secrets.SERVICE_OPENAI) or os.environ.get("OPENAI_API_KEY")
+
     def is_available(self) -> bool:
         """
         OpenAI APIが利用可能かを確認する。
@@ -113,9 +124,7 @@ class OpenAITranscriber:
         """
         if not _openai_available:
             return False
-
-        api_key = os.environ.get("OPENAI_API_KEY")
-        return bool(api_key)
+        return bool(self._resolve_api_key())
 
     def _get_client(self) -> OpenAI:
         """
@@ -128,11 +137,11 @@ class OpenAITranscriber:
             RuntimeError: APIキーが設定されていない場合
         """
         if self._client is None:
-            api_key = os.environ.get("OPENAI_API_KEY")
+            api_key = self._resolve_api_key()
             if not api_key:
                 raise RuntimeError(
-                    "OPENAI_API_KEY環境変数が設定されていません。 "
-                    "export OPENAI_API_KEY='sk-...' で設定してください"
+                    "OpenAI の API キーが設定されていません。 "
+                    "設定ウィンドウから保存するか、OPENAI_API_KEY 環境変数を設定してください"
                 )
             # HTTPコネクションプーリングで高速化 + 20秒タイムアウト
             http_client = httpx.Client(
@@ -172,7 +181,7 @@ class OpenAITranscriber:
         if not self.is_available():
             if not _openai_available:
                 return "Error: OpenAI SDKがインストールされていません。pip install openai で追加してください"
-            return "Error: OPENAI_API_KEY環境変数が設定されていません"
+            return "Error: OpenAI の API キーが未設定です（設定ウィンドウまたは OPENAI_API_KEY で指定してください）"
 
         try:
             # NumPy配列をMP3に変換（WAVより約10倍小さい）、ffmpegがなければWAVにフォールバック
