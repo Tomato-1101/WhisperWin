@@ -1,4 +1,5 @@
 audio_input_device: 3
+auto_enter_delay_ms: 50
 dark_mode: false
 default_api_models:
   groq: whisper-large-v3-turbo
@@ -16,7 +17,7 @@ hotkey2:
   backend: groq
   hotkey: <alt_r>
   hotkey_mode: hold
-language: ja
+language: ''
 llm_postprocess:
   enabled: false
   fallback_on_error: true
