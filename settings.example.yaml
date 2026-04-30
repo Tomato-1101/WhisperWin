@@ -1,0 +1,61 @@
+# WhisperWin 設定ファイルのサンプル。
+# このファイルをコピーして `settings.yaml` を作成し、自分の環境に合わせて編集する。
+# `settings.yaml` は `.gitignore` で除外されるためコミットされない。
+#
+# API キー（GROQ_API_KEY / OPENAI_API_KEY）はこのファイルに書かないこと。
+# 設定ウィンドウから入力すれば macOS Keychain / Windows Credential Manager に保存される。
+
+# 入力デバイス番号（"default" でシステム既定。設定 UI の Refresh で番号確認可）
+audio_input_device: default
+
+# 録音音声の音量正規化（API 送信前に小音量を底上げ、音割れを防止）
+audio_preprocess:
+  volume_normalize: true
+
+# Auto Enter（ダブルタップ）でテキスト挿入後の Enter 待機時間 (ms)
+auto_enter_delay_ms: 50
+
+# 設定ウィンドウのテーマ（true: ダーク、false: ライト）
+dark_mode: false
+
+# バックエンド毎の既定モデル
+default_api_models:
+  groq: whisper-large-v3-turbo
+  openai: gpt-4o-mini-transcribe
+
+# デバッグ用フラグ（通常は false）
+dev_mode: false
+
+# ホットキー1: ショートカット・モード・バックエンドを個別設定
+hotkey1:
+  hotkey: <f2>
+  hotkey_mode: toggle    # hold / toggle
+  backend: openai        # local / groq / openai
+  api_model: gpt-4o-mini-transcribe
+  api_prompt: ''
+
+# ホットキー2: 別のショートカット・別のバックエンドを併用可能
+hotkey2:
+  hotkey: <f3>
+  hotkey_mode: toggle
+  backend: groq
+  api_model: whisper-large-v3-turbo
+  api_prompt: ''
+
+# 言語コード（ja / en など。空文字で自動検出）
+language: ''
+
+# LLM 後処理（Cerebras / Groq の LLM で文字起こし結果を整える、任意機能）
+llm_postprocess:
+  enabled: false
+  fallback_on_error: true
+  model: llama-3.1-8b-instant
+  provider: groq
+  timeout: 5.0
+
+# アプリ起動時に VAD / モデルをプリロードしてレイテンシを下げる
+preload_on_startup: true
+
+# VAD（音声区間検出）でノイズ・無音区間を API 送信前に除外
+vad_filter: true
+vad_min_silence_duration_ms: 500

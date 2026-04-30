@@ -52,3 +52,29 @@ class PlatformAdapter(ABC):
     def qt_key_to_hotkey_token(self, key: int, scan_code: int = 0) -> str:
         """Qtキーコードをpynput形式トークンに変換する。"""
         raise NotImplementedError
+
+    # --- ウィンドウ可視性制御（macOS でのみ実体を持つ。既定は no-op） ---
+
+    def configure_app_visibility(self, hide_from_dock: bool) -> None:
+        """
+        アプリ可視性（Dock / タスクバー登録）を切り替える。
+
+        macOS のみ実装が必要。Windows はタスクバーに出るのが通常挙動なので何もしない。
+
+        Args:
+            hide_from_dock: True なら Dock / タスクバーから隠す
+        """
+        return None
+
+    def bring_to_front(self, window: Any) -> None:
+        """
+        指定ウィンドウを最前面に持ち上げる OS ネイティブ処理。
+
+        Qt の `raise_()` / `activateWindow()` だけでは macOS の Accessory モードで
+        前面化できないため、AppKit の `activateIgnoringOtherApps_` 等で補強する。
+        Windows では Qt 標準処理で十分なので no-op。
+
+        Args:
+            window: 対象ウィンドウ（QWidget 等）
+        """
+        return None

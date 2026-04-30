@@ -33,7 +33,16 @@ from PySide6.QtWidgets import (
 from ..config import ConfigManager, HotkeyMode, TranscriptionBackend
 from ..core.audio_recorder import AudioRecorder
 from ..platform import PlatformAdapter, get_platform_adapter
+from ..utils import secrets
 from .styles import MacTheme
+
+
+# 設定ウィンドウ上の backend 選択値と Keychain サービス識別子のマッピング。
+# Hotkey1 / Hotkey2 で同じ backend を使う場合は同じ Keychain エントリを共有する。
+_BACKEND_TO_SERVICE = {
+    TranscriptionBackend.GROQ.value: secrets.SERVICE_GROQ,
+    TranscriptionBackend.OPENAI.value: secrets.SERVICE_OPENAI,
+}
 
 
 class ThemeToggleButton(QPushButton):
@@ -496,8 +505,104 @@ class SettingsWindow(QWidget):
         setattr(self, f"_api{slot_id}_prompt_input", prompt_input)
         layout.addRow("Prompt:", prompt_input)
 
+        # API キー入力（Keychain 保存。settings.yaml には書かない）
+        # 入力中は伏字表示。Save 押下時のみ keyring に書き込み、Clear で削除。
+        key_input = QLineEdit()
+        key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        key_input.setPlaceholderText("(Saved in macOS Keychain / Windows Credential Manager)")
+        setattr(self, f"_api{slot_id}_key_input", key_input)
+        layout.addRow("API Key:", key_input)
+
+        # 保存状況の表示と保存/削除ボタン
+        status_label = QLabel("Not set")
+        status_label.setStyleSheet("color: #888; font-size: 11px;")
+        setattr(self, f"_api{slot_id}_key_status", status_label)
+
+        save_btn = QPushButton("Save Key")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.clicked.connect(lambda _=False, sid=slot_id: self._save_api_key(sid))
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.clicked.connect(lambda _=False, sid=slot_id: self._clear_api_key(sid))
+
+        key_actions = QWidget()
+        key_actions_layout = QHBoxLayout(key_actions)
+        key_actions_layout.setContentsMargins(0, 0, 0, 0)
+        key_actions_layout.setSpacing(8)
+        key_actions_layout.addWidget(status_label)
+        key_actions_layout.addStretch()
+        key_actions_layout.addWidget(save_btn)
+        key_actions_layout.addWidget(clear_btn)
+        layout.addRow("", key_actions)
+
         widget.setVisible(False)  # 初期状態は非表示
         return widget
+
+    def _refresh_api_key_status(self, slot_id: int) -> None:
+        """
+        指定スロットの API キー保存状況ラベルを更新する。
+
+        Keychain にキーが登録されているかどうかを表示するだけで、
+        実際の値は表示しない（パスワード欄は常に空）。
+        """
+        backend_combo = getattr(self, f"_backend{slot_id}_combo", None)
+        status_label = getattr(self, f"_api{slot_id}_key_status", None)
+        if backend_combo is None or status_label is None:
+            return
+        service = _BACKEND_TO_SERVICE.get(backend_combo.currentText())
+        if service is None:
+            status_label.setText("")
+            return
+        if not secrets.is_keyring_available():
+            status_label.setText("Keychain unavailable (env var fallback)")
+            return
+        existing = secrets.get_api_key(service)
+        status_label.setText("Saved in Keychain" if existing else "Not set")
+
+    def _save_api_key(self, slot_id: int) -> None:
+        """
+        入力欄の API キーを Keychain に保存する。
+
+        backend がローカル等で対応サービスがない場合は no-op。
+        保存後は入力欄をクリアし（再表示しないため）、ステータスを更新する。
+        """
+        backend_combo = getattr(self, f"_backend{slot_id}_combo")
+        key_input = getattr(self, f"_api{slot_id}_key_input")
+        service = _BACKEND_TO_SERVICE.get(backend_combo.currentText())
+        if service is None:
+            return
+
+        new_key = key_input.text().strip()
+        if not new_key:
+            QMessageBox.warning(self, "API Key", "API キーを入力してください。")
+            return
+
+        if not secrets.set_api_key(service, new_key):
+            QMessageBox.critical(
+                self,
+                "API Key",
+                "Keychain への保存に失敗しました。環境変数 (.env) で設定してください。"
+            )
+            return
+
+        key_input.clear()
+        # 同じバックエンドを使っている他スロットのステータスも更新する
+        for sid in (1, 2):
+            self._refresh_api_key_status(sid)
+
+    def _clear_api_key(self, slot_id: int) -> None:
+        """Keychain に保存された API キーを削除する。"""
+        backend_combo = getattr(self, f"_backend{slot_id}_combo")
+        key_input = getattr(self, f"_api{slot_id}_key_input")
+        service = _BACKEND_TO_SERVICE.get(backend_combo.currentText())
+        if service is None:
+            return
+
+        secrets.delete_api_key(service)
+        key_input.clear()
+        for sid in (1, 2):
+            self._refresh_api_key_status(sid)
 
     def _create_advanced_page(self) -> QWidget:
         """Advancedページを作成する。"""
@@ -681,6 +786,9 @@ class SettingsWindow(QWidget):
                 hotkey_config = config.get(f"hotkey{slot_id}", {})
                 api_model = hotkey_config.get("api_model", "gpt-4o-mini-transcribe")
                 model_combo.setCurrentText(api_model)
+
+            # 切り替えに伴い Keychain 保存状況の表示も更新
+            self._refresh_api_key_status(slot_id)
 
     def _toggle_theme(self) -> None:
         """ダーク/ライトモードを切り替える。"""

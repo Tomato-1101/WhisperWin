@@ -2,6 +2,57 @@
 
 WhisperWinの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-05-01
+
+### Added
+- **API キーの OS シークレットストア保管 (macOS Keychain / Windows Credential Manager)**
+  - 新規モジュール `src/utils/secrets.py`: `keyring` ライブラリを通じて `get_api_key` / `set_api_key` / `delete_api_key` を提供（サービス識別子 `WhisperWin.Groq` / `WhisperWin.OpenAI`）
+  - 設定ウィンドウの各 Hotkey の API 設定エリアに「API Key」入力欄（パスワードマスク）と Save / Clear ボタンを追加。同じ backend を選んだ Hotkey 間で同じエントリを共有
+  - 取得は **Keychain → 環境変数** の優先順。既存の `.env` / `GROQ_API_KEY` / `OPENAI_API_KEY` 利用は維持され、後方互換を保ったまま Keychain に移行可能（自動マイグレーションは行わない）
+  - `settings.yaml` には API キーを書き込まない（ConfigManager 側は変更なし）
+- **macOS でのメニューバー常駐動作**
+  - `python run.py` 起動時に `NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)` を呼んで Dock / Cmd+Tab から非表示化
+  - PyInstaller ビルド版は `.app` バンドル化し、`Info.plist` に `LSUIElement: True` / `NSPrincipalClass: NSApplication` / `NSMicrophoneUsageDescription` を含める（`WhisperWin.spec`）
+  - 設定ウィンドウを開く処理を `raise_()` → `activateWindow()` → `NSApp.activateIgnoringOtherApps_(True)` の順で前面化するよう修正（メニューバー → Settings で確実に最前面に出る）
+
+### Changed
+- `requirements.txt` に `keyring>=24.0` と `pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"` を追加
+- `PlatformAdapter` に `configure_app_visibility(hide_from_dock)` と `bring_to_front(window)` を追加（既定 no-op）。macOS アダプタでのみ AppKit 経由で実装し、Windows は no-op
+- `GroqTranscriber._get_client` / `OpenAITranscriber._get_client` の API キー取得経路を `_resolve_api_key()` ヘルパー経由に統一（Keychain → 環境変数）。エラーメッセージも「設定ウィンドウから保存するか、環境変数を設定してください」に更新
+- **メニューバーアイコンの左クリック挙動を変更**: 以前は左クリック / ダブルクリックで設定ウィンドウが直接開いていたが、コンテキストメニューを表示するだけに変更。ユーザーがメニューから「Settings」を選んだ時にのみ設定ウィンドウを開く（`src/ui/system_tray.py` の `_setup_click_handler` / `_on_activated` を削除、`setContextMenu` のみで動作）
+
+### Removed
+- **Force Reset 機能を完全削除**
+  - トレイメニューの「Force Reset」項目（`src/ui/system_tray.py` の `force_reset` Signal とアクション）を削除
+  - `src/app.py` から `force_reset()` メソッド本体、シグナル接続、`_reset_generation` 世代カウンタ、`_queue_processor` / `_process_transcription_task` 内の世代比較による結果破棄ロジックを全て削除
+  - 通常運用で連打フリーズ等の根治対応（自動復旧ループ・録音解除等）が既に入っているため、ユーザー手動のリセットボタンは不要と判断
+- **Dynamic Island 風オーバーレイ UI を完全廃止** (`src/ui/overlay.py` 削除)
+  - 録音 / 文字起こし状態は **トレイアイコンの色だけ** で判別する設計に統一（IDLE 青 / RECORDING 赤 / RECORDING_AUTO_ENTER 紫 / TRANSCRIBING オレンジ）
+  - `src/app.py` から overlay 関連の初期化（`_setup_ui_components` 内）、状態反映 (`_update_ui_status`)、音声レベル反映 (`_on_audio_level`)、波形コールバック登録 (`set_level_callback`) をすべて削除
+  - `_show_backend_warning` を「オーバーレイにメッセージ表示」から「ログに warning 出力」に変更（API キー未設定時など）
+  - `src/ui/__init__.py` から `DynamicIslandOverlay` の export を削除
+  - `src/config/constants.py` から UI セクションの `OVERLAY_BASE_WIDTH` / `OVERLAY_BASE_HEIGHT` / `OVERLAY_EXPANDED_WIDTH` / `OVERLAY_EXPANDED_HEIGHT` / `OVERLAY_TOP_MARGIN` / `ANIMATION_DURATION_MS` を削除
+  - 副次効果: 起動時にオーバーレイ用の QMainWindow を作らないため、初期化が軽量化
+
+### Security
+- **`settings.yaml` を git 追跡対象から除外**
+  - `.gitignore:81` に `settings.yaml` が記載されていたが、過去に誤って追跡されていたため `git rm --cached settings.yaml` で解除（ローカルファイルは残存）
+  - 新規 `settings.example.yaml` をコミット対象に追加。新規ユーザー / Clone 時はこのファイルをコピーして使う
+  - 将来 `settings.yaml` に万一機密情報を書き込んでも誤コミットされないよう予防
+- **依存パッケージの完全 lock**
+  - 新規 `requirements.lock`: `pip freeze --exclude-editable` で venv 内の全パッケージとバージョンを固定（再現性 / サプライチェーン耐性向上）
+  - 既存の `requirements.txt` は人間が読みやすい下限指定の形を維持。lock ファイルは並列に追加するだけで既存インストール手順への影響なし
+
+### Technical Details
+- **新規ファイル**: `src/utils/secrets.py` / `settings.example.yaml` / `requirements.lock`
+- **編集**: `src/main.py`（QApplication 作成後に `configure_app_visibility(True)` を呼び出し）
+- **編集**: `src/app.py`（`_open_settings` を最前面化シーケンスに変更）
+- **編集**: `src/platform/base.py` / `src/platform/macos/adapter.py`（可視性制御メソッドを追加）
+- **編集**: `src/core/groq_transcriber.py` / `src/core/openai_transcriber.py`（`_resolve_api_key` 追加）
+- **編集**: `src/ui/settings_window.py`（API キー入力欄、`_save_api_key` / `_clear_api_key` / `_refresh_api_key_status` 追加、backend 切替時に Keychain ステータス再描画）
+- **編集**: `src/ui/system_tray.py`（左クリック直接起動を廃止、メニュー経由のみ）
+- **編集**: `WhisperWin.spec`（macOS 用 BUNDLE と Info.plist）
+
 ## [Unreleased] - 2026-04-30
 
 ### Added

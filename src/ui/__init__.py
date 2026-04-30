@@ -1,16 +1,15 @@
 """
 UIモジュール
 
-Dynamic Islandオーバーレイ、設定画面、システムトレイなど、
-アプリケーションのUIコンポーネントを提供する。
+設定ウィンドウとシステムトレイ／メニューバーアイコンを提供する。
+状態表示はトレイアイコンの色で行うため、画面上部に浮く Dynamic Island
+オーバーレイは持たない（廃止済み）。
 """
 
-from .overlay import DynamicIslandOverlay
 from .settings_window import SettingsWindow
 from .system_tray import SystemTray
 
 __all__ = [
-    "DynamicIslandOverlay",  # Dynamic Island風オーバーレイ
     "SettingsWindow",        # 設定ウィンドウ
     "SystemTray",            # システムトレイアイコン
 ]

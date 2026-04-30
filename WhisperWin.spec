@@ -75,3 +75,19 @@ coll = COLLECT(
     upx_exclude=[],
     name='WhisperWin',
 )
+
+# macOS 専用: メニューバー常駐アプリとして配布する .app バンドル。
+# LSUIElement=True で起動時から Dock / Cmd+Tab に出さない（バックグラウンド常駐）。
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name='WhisperWin.app',
+        icon=None,
+        bundle_identifier='com.whisperwin.app',
+        info_plist={
+            'LSUIElement': True,
+            'NSPrincipalClass': 'NSApplication',
+            'NSHighResolutionCapable': True,
+            'NSMicrophoneUsageDescription': '音声入力を文字起こしするためにマイクを使用します。',
+        },
+    )

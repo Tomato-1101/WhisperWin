@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from .app import SuperWhisperApp
+from .platform import get_platform_adapter
 from .utils.logger import get_logger, setup_logger
 
 # .envファイルから環境変数を読み込み（APIキー等）
@@ -37,7 +38,11 @@ def main() -> int:
         # Qtアプリケーションを作成
         app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)  # システムトレイ動作のため
-        
+
+        # macOS では Dock / Cmd+Tab から隠す（メニューバー常駐アプリとして動作）。
+        # Windows / Linux ではアダプタが no-op なので副作用なし。
+        get_platform_adapter().configure_app_visibility(hide_from_dock=True)
+
         # メインコントローラーを作成
         controller = SuperWhisperApp()
         

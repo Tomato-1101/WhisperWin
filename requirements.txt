@@ -33,3 +33,9 @@ cerebras-cloud-sdk>=1.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0
+
+# Secret storage (macOS Keychain / Windows Credential Manager)
+keyring>=24.0
+
+# macOS native APIs (Dock 非表示制御で AppKit を使用)
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"

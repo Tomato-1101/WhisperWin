@@ -16,6 +16,7 @@ import numpy.typing as npt
 
 from .audio_utils import numpy_to_audio_bytes
 from ..config.constants import SAMPLE_RATE
+from ..utils import secrets
 from ..utils.logger import get_logger
 from .vad import VadFilter
 
@@ -100,35 +101,43 @@ class GroqTranscriber:
                 f"推奨モデル: {', '.join(self.AVAILABLE_MODELS)}"
             )
 
+    @staticmethod
+    def _resolve_api_key() -> Optional[str]:
+        """
+        API キーを Keychain → 環境変数 の優先順で解決する。
+
+        macOS Keychain / Windows Credential Manager に保存された値を最優先で使い、
+        無ければ既存の `GROQ_API_KEY` 環境変数にフォールバックする。
+        """
+        return secrets.get_api_key(secrets.SERVICE_GROQ) or os.environ.get("GROQ_API_KEY")
+
     def is_available(self) -> bool:
         """
         Groq APIが利用可能かを確認する。
-        
+
         Returns:
             SDKがインストール済みでAPIキーが設定されている場合True
         """
         if not _groq_available:
             return False
-
-        api_key = os.environ.get("GROQ_API_KEY")
-        return bool(api_key)
+        return bool(self._resolve_api_key())
 
     def _get_client(self) -> Groq:
         """
         Groqクライアントを取得または作成する。
-        
+
         Returns:
             初期化済みのGroqクライアント
-        
+
         Raises:
             RuntimeError: APIキーが設定されていない場合
         """
         if self._client is None:
-            api_key = os.environ.get("GROQ_API_KEY")
+            api_key = self._resolve_api_key()
             if not api_key:
                 raise RuntimeError(
-                    "GROQ_API_KEY環境変数が設定されていません。 "
-                    "export GROQ_API_KEY='gsk_...' で設定してください"
+                    "Groq の API キーが設定されていません。 "
+                    "設定ウィンドウから保存するか、GROQ_API_KEY 環境変数を設定してください"
                 )
             # HTTPコネクションプーリングで高速化 + 20秒タイムアウト
             http_client = httpx.Client(
@@ -170,7 +179,7 @@ class GroqTranscriber:
         if not self.is_available():
             if not _groq_available:
                 return "Error: Groq SDKがインストールされていません。pip install groq で追加してください"
-            return "Error: GROQ_API_KEY環境変数が設定されていません"
+            return "Error: Groq の API キーが未設定です（設定ウィンドウまたは GROQ_API_KEY で指定してください）"
 
         try:
             # NumPy配列をMP3に変換（WAVより約10倍小さい）、ffmpegがなければWAVにフォールバック
