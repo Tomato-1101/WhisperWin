@@ -2,8 +2,11 @@
 音声活性検出（VAD）モジュール
 
 Silero VADを使用して音声に発話が含まれるかを検出する。
-CUDA対応でGPU高速化が可能。Groqモードでの無音判定に使用される。
+Apple Silicon (MPS) / CUDA / CPU に対応し、
+Groq/OpenAIモードでの無音判定に使用される。
 """
+
+import platform
 
 import torch
 import numpy as np
@@ -23,8 +26,8 @@ class VadFilter:
     
     Attributes:
         min_silence_duration_ms: 無音と判定する最小継続時間（ミリ秒）
-        use_cuda: CUDAを使用するかどうか
-        device: 使用デバイス（'cuda' or 'cpu'）
+        use_cuda: ハードウェアアクセラレーションを使用するかどうか
+        device: 使用デバイス（'mps' / 'cuda' / 'cpu'）
     """
     
     def __init__(
@@ -37,16 +40,37 @@ class VadFilter:
         
         Args:
             min_silence_duration_ms: 発話終了と判定する最小無音時間（ミリ秒）
-            use_cuda: CUDA使用フラグ（利用可能な場合のみ有効）
+            use_cuda: ハードウェアアクセラレーション使用フラグ
         """
         self.min_silence_duration_ms = min_silence_duration_ms
-        self.use_cuda = use_cuda and torch.cuda.is_available()
         self._model = None  # 遅延ロード用
-        
-        # デバイス設定
-        self.device = 'cuda' if self.use_cuda else 'cpu'
+
+        # デバイス設定: Apple Silicon(MPS)を最優先、次にCUDA、最後にCPU
+        self.device = self._select_device(use_cuda)
         logger.info(f"VADフィルター初期化 (デバイス: {self.device})")
-        
+
+    def _select_device(self, use_acceleration: bool) -> str:
+        """
+        使用デバイスを選択する。
+
+        macOSではMPSを最優先で使用し、利用できない場合はCUDA/CPUにフォールバックする。
+        """
+        if not use_acceleration:
+            return "cpu"
+
+        is_macos = platform.system() == "Darwin"
+        mps_available = bool(
+            hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+        )
+        if is_macos and mps_available:
+            return "mps"
+
+        if torch.cuda.is_available():
+            return "cuda"
+
+        return "cpu"
+
     def _load_model(self):
         """Silero VADモデルを遅延ロードする。"""
         if self._model is None:
@@ -55,10 +79,14 @@ class VadFilter:
                 
                 # モデルをロード
                 self._model = load_silero_vad()
-                
-                # CUDAデバイスに移動
-                if self.use_cuda:
-                    self._model = self._model.to(self.device)
+
+                # デバイスに移動（失敗時はCPUフォールバック）
+                if self.device != "cpu":
+                    try:
+                        self._model = self._model.to(self.device)
+                    except Exception as e:
+                        logger.warning(f"VADモデルを{self.device}へ移動できませんでした。CPUへフォールバックします: {e}")
+                        self.device = "cpu"
                 
                 logger.info(f"Silero VADモデルをロード ({self.device})")
                 
@@ -88,17 +116,18 @@ class VadFilter:
             
             # NumPy配列をTensorに変換
             audio_tensor = torch.from_numpy(audio_data)
-            if self.use_cuda:
+            if self.device != "cpu":
                 audio_tensor = audio_tensor.to(self.device)
             
             # 発話区間を検出
-            speech_timestamps = get_speech_timestamps(
-                audio_tensor,
-                self._model,
-                sampling_rate=sample_rate,
-                min_silence_duration_ms=self.min_silence_duration_ms,
-                return_seconds=False
-            )
+            with torch.inference_mode():
+                speech_timestamps = get_speech_timestamps(
+                    audio_tensor,
+                    self._model,
+                    sampling_rate=sample_rate,
+                    min_silence_duration_ms=self.min_silence_duration_ms,
+                    return_seconds=False
+                )
             
             has_speech = len(speech_timestamps) > 0
             logger.debug(f"VAD結果: has_speech={has_speech}, セグメント数={len(speech_timestamps)}")
@@ -119,4 +148,3 @@ class VadFilter:
         logger.info("VADモデルをプリロード中...")
         self._load_model()
         logger.info("VADモデルのプリロードが完了しました")
-

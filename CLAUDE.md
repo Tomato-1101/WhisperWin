@@ -307,7 +307,7 @@ feat: デュアルホットキー機能の実装
 
 **Claude Code は、ある程度コード実装が進んだら、自動的にコミットすること。**
 
-**重要: プッシュは自動的に行わない。コミットまで。**
+**コミット完了後、通常ブランチへの push まで自動で行ってよい（main / master への直接 push と --force は禁止）。**
 
 #### いつコミットすべきか
 
@@ -349,9 +349,13 @@ feat: デュアルホットキー機能の実装
 
 #### プッシュについて
 
-- **プッシュは自動的に行わない**
-- ユーザーが手動で `git push` を実行する
-- コミット後、ユーザーにプッシュ可能であることを通知
+- **通常ブランチ（feature ブランチ等）への push は自動 OK**
+  コミット直後にそのまま `git push origin <branch>` まで実行する
+- 以下は手動承認が必要（自動 push しない）：
+  - `main` / `master` への直接 push
+  - `--force` / `--force-with-lease`
+  - secret を含む疑いのあるコミット
+- push 後はコミット ID と remote の URL を簡潔に報告
 
 #### 例外
 
@@ -381,7 +385,8 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 EOF
 )"
 
-# プッシュは行わない（ユーザーが手動で実行）
+# 4. push（feature ブランチなら自動 OK、main / master は手動）
+git push origin <branch>
 ```
 
 #### ユーザーへの報告
@@ -389,12 +394,22 @@ EOF
 コミット後は、以下を報告：
 
 ```
-✅ 変更をコミットしました
+✅ 変更をコミット & push しました
+- コミットID: abc1234
+- ファイル: app.py, settings_window.py, CHANGELOG.md
+- ブランチ: feature/xxx
+- remote: origin/feature/xxx
+```
+
+main / master の場合は push せずに以下のように報告：
+
+```
+✅ 変更をコミットしました（push は手動で）
 - コミットID: abc1234
 - ファイル: app.py, settings_window.py, CHANGELOG.md
 - ブランチ: main
 
-必要に応じて `git push origin main` でリモートにプッシュできます。
+main への push は手動で実行してください: `git push origin main`
 ```
 
 ### バージョニング規則

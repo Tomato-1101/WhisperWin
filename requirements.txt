@@ -1,20 +1,15 @@
-# OpenAI Whisper for GPU
-faster-whisper
-tokenizers==0.14.1
-
-# PyTorch with CUDA 12.1 support (GPU required)
-# Install with: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
---index-url https://download.pytorch.org/whl/cu121
+# VAD runtime (Apple SiliconではMPSを使用可能)
 torch
 torchaudio
 numpy
+
+# Input & audio
 pynput
 sounddevice
 pyperclip
 pyyaml
-scipy
 
-# VAD (Voice Activity Detection)
+# VAD
 silero-vad
 
 # Optional but recommended
@@ -27,11 +22,14 @@ pyinstaller
 # Groq API (Cloud transcription)
 groq>=0.4.0
 
-# Cerebras API (LLM post-processing - optional)
-cerebras-cloud-sdk>=1.0.0
-
 # OpenAI API (GPT-4o Transcription & LLM post-processing - optional)
 openai>=1.0.0
+
+# HTTP client tuning for API calls
+httpx>=0.27.0
+
+# Cerebras API (LLM post-processing - optional)
+cerebras-cloud-sdk>=1.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0

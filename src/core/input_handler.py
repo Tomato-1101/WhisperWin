@@ -7,11 +7,13 @@
 """
 
 import time
+from typing import Optional
 
 import pyperclip
 from pynput.keyboard import Controller, Key
 
 from ..utils.logger import get_logger
+from ..platform import PlatformAdapter, get_platform_adapter
 
 logger = get_logger(__name__)
 
@@ -27,9 +29,10 @@ class InputHandler:
     日本語や中国語などのマルチバイト文字を確実に入力できる。
     """
     
-    def __init__(self) -> None:
+    def __init__(self, platform_adapter: Optional[PlatformAdapter] = None) -> None:
         """キーボードコントローラーを初期化する。"""
         self._keyboard = Controller()
+        self._platform = platform_adapter or get_platform_adapter()
 
     def insert_text(self, text: str) -> bool:
         """
@@ -54,16 +57,43 @@ class InputHandler:
             # クリップボードの準備が整うまで少し待機
             time.sleep(PASTE_DELAY)
             
-            # Ctrl+V をシミュレート
-            with self._keyboard.pressed(Key.ctrl):
+            # OS別アダプタが定義する貼り付けショートカットを使用
+            # 修飾キーが押しっぱなしになる事故を防ぐため try/finally で確実に release
+            paste_modifier = self._platform.paste_modifier
+            self._keyboard.press(paste_modifier)
+            try:
                 self._keyboard.press('v')
                 self._keyboard.release('v')
-            
+            finally:
+                try:
+                    self._keyboard.release(paste_modifier)
+                except Exception as e:
+                    # release 失敗は致命ではないが、修飾キーが残ると操作不能になるため警告
+                    logger.warning(f"貼り付け修飾キーの解放に失敗: {e}")
+
             logger.debug(f"テキスト挿入: {text[:50]}...")
             return True
-            
+
         except Exception as e:
             logger.error(f"テキスト挿入エラー: {e}")
+            return False
+
+    def press_enter(self) -> bool:
+        """
+        Enterキーを1回押す。
+
+        チャットアプリ等でメッセージ送信に使用。
+
+        Returns:
+            成功した場合True、失敗した場合False
+        """
+        try:
+            self._keyboard.press(Key.enter)
+            self._keyboard.release(Key.enter)
+            logger.debug("Enterキーを送信しました")
+            return True
+        except Exception as e:
+            logger.error(f"Enterキー送信エラー: {e}")
             return False
 
     def type_text(self, text: str) -> bool:

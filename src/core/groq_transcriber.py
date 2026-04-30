@@ -90,7 +90,7 @@ class GroqTranscriber:
         if vad_filter:
             self._vad_filter = VadFilter(
                 min_silence_duration_ms=vad_min_silence_duration_ms,
-                use_cuda=True  # VADにはCUDAを使用
+                use_cuda=True  # 利用可能なハードウェアアクセラレーションを使用
             )
 
         # モデル名の検証
@@ -226,9 +226,25 @@ class GroqTranscriber:
     def unload_model(self) -> None:
         """
         クライアント参照をクリアする。
-        
+
         Groq APIはサーバーレスのため、キャッシュされたクライアントをクリアするのみ。
+        HTTP コネクションプールも close() して接続リークを防ぐ。
         """
+        self.close()
+
+    def close(self) -> None:
+        """Groq クライアントの HTTP コネクションプールを閉じる。
+
+        ホットリロード等で本インスタンスが破棄される際に呼び、
+        httpx 接続プールが leak しないようにする。
+        """
+        client = self._client
+        if client is not None:
+            try:
+                if hasattr(client, "close"):
+                    client.close()
+            except Exception as e:
+                logger.warning(f"Groqクライアント close に失敗: {e}")
         self._client = None
         logger.debug("Groqクライアント参照をクリアしました")
 
@@ -241,4 +257,3 @@ class GroqTranscriber:
         """
         if self.vad_enabled and self._vad_filter:
             self._vad_filter.preload_model()
-
