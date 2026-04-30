@@ -4,6 +4,11 @@ WhisperWinの変更履歴を記録するファイルです。
 
 ## [Unreleased] - 2026-04-19
 
+### Added
+- **Auto Enter Delay スライダーを設定 UI に追加**
+  - ダブルタップ Auto-Enter 機能で、テキスト挿入後から Enter 押下までの待機時間を 0〜500ms で調整可能（`src/ui/settings_window.py`）
+  - 既定値 50ms。一部アプリが即時 Enter に反応しない問題に対するユーザー調整手段（`src/config/constants.py`）
+
 ### Fixed
 - **録音状態の Race Condition 解消（Phase 3）**
   - `_recording_lock` (RLock) を導入し、`start_recording` / `stop_and_transcribe` / `force_reset` の check-then-set を直列化（`src/app.py`）

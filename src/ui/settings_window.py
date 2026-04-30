@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -515,6 +516,28 @@ class SettingsWindow(QWidget):
         self._vad_silence_spin.setSuffix(" ms")
         layout.addRow("VAD Min Silence:", self._vad_silence_spin)
 
+        # Auto Enter 遅延（ダブルタップ時、テキスト挿入後のEnter押下までの待機時間）
+        # 一部アプリが即時Enterに反応しないため、ユーザー側で調整可能にする
+        self._auto_enter_delay_slider = QSlider(Qt.Orientation.Horizontal)
+        self._auto_enter_delay_slider.setRange(0, 500)
+        self._auto_enter_delay_slider.setSingleStep(10)
+        self._auto_enter_delay_slider.setPageStep(50)
+        self._auto_enter_delay_slider.setMinimumWidth(240)
+
+        self._auto_enter_delay_label = QLabel("50 ms")
+        self._auto_enter_delay_label.setMinimumWidth(56)
+        self._auto_enter_delay_slider.valueChanged.connect(
+            lambda v: self._auto_enter_delay_label.setText(f"{v} ms")
+        )
+
+        delay_row = QWidget()
+        delay_row_layout = QHBoxLayout(delay_row)
+        delay_row_layout.setContentsMargins(0, 0, 0, 0)
+        delay_row_layout.setSpacing(8)
+        delay_row_layout.addWidget(self._auto_enter_delay_slider)
+        delay_row_layout.addWidget(self._auto_enter_delay_label)
+        layout.addRow("Auto Enter Delay:", delay_row)
+
         # 入力デバイス
         self._input_device_combo = QComboBox()
         self._input_device_combo.setMinimumWidth(320)
@@ -595,6 +618,7 @@ class SettingsWindow(QWidget):
         # Advanced
         self._vad_check.setChecked(config.get("vad_filter", True))
         self._vad_silence_spin.setValue(config.get("vad_min_silence_duration_ms", 500))
+        self._auto_enter_delay_slider.setValue(config.get("auto_enter_delay_ms", 50))
         self._populate_input_devices()
         self._set_input_device_selection(config.get("audio_input_device", "default"))
 
@@ -675,6 +699,7 @@ class SettingsWindow(QWidget):
             "vad_filter": self._vad_check.isChecked(),
             "vad_min_silence_duration_ms": self._vad_silence_spin.value(),
             "audio_input_device": selected_input_device,
+            "auto_enter_delay_ms": self._auto_enter_delay_slider.value(),
 
             # ホットキー1 設定
             "hotkey1": {

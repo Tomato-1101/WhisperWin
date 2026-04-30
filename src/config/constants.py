@@ -76,6 +76,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
     # 起動時プリロード - 起動時にVADを事前ロードして最初の文字起こしを高速化
     "preload_on_startup": True,
+
+    # ダブルタップ Auto-Enter: テキスト挿入後からEnter押下までの待機時間（ms）
+    # 一部アプリは即座のEnterに反応しないため調整可能にする
+    "auto_enter_delay_ms": 50,
 }
 
 # ============================================
