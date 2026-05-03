@@ -1,18 +1,18 @@
 # Changelog
 
-WhisperWinの変更履歴を記録するファイルです。
+voicekeyの変更履歴を記録するファイルです。
 
 ## [Unreleased] - 2026-05-01
 
 ### Added
 - **API キーの OS シークレットストア保管 (macOS Keychain / Windows Credential Manager)**
-  - 新規モジュール `src/utils/secrets.py`: `keyring` ライブラリを通じて `get_api_key` / `set_api_key` / `delete_api_key` を提供（サービス識別子 `WhisperWin.Groq` / `WhisperWin.OpenAI`）
+  - 新規モジュール `src/utils/secrets.py`: `keyring` ライブラリを通じて `get_api_key` / `set_api_key` / `delete_api_key` を提供（サービス識別子 `voicekey.Groq` / `voicekey.OpenAI`）
   - 設定ウィンドウの各 Hotkey の API 設定エリアに「API Key」入力欄（パスワードマスク）と Save / Clear ボタンを追加。同じ backend を選んだ Hotkey 間で同じエントリを共有
   - 取得は **Keychain → 環境変数** の優先順。既存の `.env` / `GROQ_API_KEY` / `OPENAI_API_KEY` 利用は維持され、後方互換を保ったまま Keychain に移行可能（自動マイグレーションは行わない）
   - `settings.yaml` には API キーを書き込まない（ConfigManager 側は変更なし）
 - **macOS でのメニューバー常駐動作**
   - `python run.py` 起動時に `NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)` を呼んで Dock / Cmd+Tab から非表示化
-  - PyInstaller ビルド版は `.app` バンドル化し、`Info.plist` に `LSUIElement: True` / `NSPrincipalClass: NSApplication` / `NSMicrophoneUsageDescription` を含める（`WhisperWin.spec`）
+  - PyInstaller ビルド版は `.app` バンドル化し、`Info.plist` に `LSUIElement: True` / `NSPrincipalClass: NSApplication` / `NSMicrophoneUsageDescription` を含める（`voicekey.spec`）
   - 設定ウィンドウを開く処理を `raise_()` → `activateWindow()` → `NSApp.activateIgnoringOtherApps_(True)` の順で前面化するよう修正（メニューバー → Settings で確実に最前面に出る）
 
 ### Changed
@@ -51,7 +51,7 @@ WhisperWinの変更履歴を記録するファイルです。
 - **編集**: `src/core/groq_transcriber.py` / `src/core/openai_transcriber.py`（`_resolve_api_key` 追加）
 - **編集**: `src/ui/settings_window.py`（API キー入力欄、`_save_api_key` / `_clear_api_key` / `_refresh_api_key_status` 追加、backend 切替時に Keychain ステータス再描画）
 - **編集**: `src/ui/system_tray.py`（左クリック直接起動を廃止、メニュー経由のみ）
-- **編集**: `WhisperWin.spec`（macOS 用 BUNDLE と Info.plist）
+- **編集**: `voicekey.spec`（macOS 用 BUNDLE と Info.plist）
 
 ## [Unreleased] - 2026-04-30
 
@@ -366,7 +366,7 @@ WhisperWinの変更履歴を記録するファイルです。
 - 安定版リリース
 
 ### [2025-12-01] - 初期リリース
-- プロジェクト名変更（SuperWhisperLike → WhisperWin）
+- プロジェクト名変更（SuperWhisperLike → voicekey）
 - GNU GPL v3ライセンス追加
 - 無音検出のUIフィードバック
 - エラーハンドリング改善

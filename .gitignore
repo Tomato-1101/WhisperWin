@@ -1,5 +1,5 @@
 # ============================================
-# WhisperWin .gitignore
+# voicekey .gitignore
 # ============================================
 
 # ------------------------------------------
@@ -65,8 +65,8 @@ build/
 dist/
 *.spec
 # メインのspecファイルは保持
-!WhisperWin.spec
-!WhisperWin_debug.spec
+!voicekey.spec
+!voicekey_debug.spec
 
 # ------------------------------------------
 # ログファイル

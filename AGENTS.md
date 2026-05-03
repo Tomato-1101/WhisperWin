@@ -5,12 +5,12 @@
 - `src/config/` holds enums/defaults and `config_manager.py` for hot-reloadable settings.
 - `src/core/` contains audio capture, VAD, transcription backends (local/Groq/OpenAI), LLM text processing, and simulated input.
 - `src/ui/` defines the Dynamic Island overlay, settings window, styles, and system tray integration; `src/utils/logger.py` configures logging.
-- Runtime config lives in `settings.yaml`; secrets go in `.env` (see `.env.example`). Packaging specs: `WhisperWin.spec` and `WhisperWin_debug.spec`; built artifacts land in `dist/` with staging in `build/`.
+- Runtime config lives in `settings.yaml`; secrets go in `.env` (see `.env.example`). Packaging specs: `voicekey.spec` and `voicekey_debug.spec`; built artifacts land in `dist/` with staging in `build/`.
 
 ## Build, Test, and Development Commands
 - Create env: `python -m venv venv` then `.\venv\Scripts\Activate.ps1`; install deps with `pip install -r requirements.txt` (install CUDA wheels via the provided PyTorch index if using GPU).
 - Run dev app: `python run.py` (reads `settings.yaml` and `.env`, opens system tray + overlay).
-- Package: `pyinstaller WhisperWin.spec --clean --noconfirm` → `dist/WhisperWin/WhisperWin.exe`.
+- Package: `pyinstaller voicekey.spec --clean --noconfirm` → `dist/voicekey/voicekey.exe`.
 - Optional: `python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121` when CUDA wheels are missing.
 
 ## Coding Style & Naming Conventions

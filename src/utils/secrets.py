@@ -15,8 +15,8 @@ logger = get_logger(__name__)
 
 # サービス識別子（macOS Keychain や Windows Credential Manager 上のエントリ名）。
 # Hotkey1/2 が同じバックエンドを使う場合は同一エントリを共有する。
-SERVICE_GROQ: str = "WhisperWin.Groq"
-SERVICE_OPENAI: str = "WhisperWin.OpenAI"
+SERVICE_GROQ: str = "voicekey.Groq"
+SERVICE_OPENAI: str = "voicekey.OpenAI"
 
 # ユーザー名は固定。アプリ単一ユーザー前提のため、エントリ識別はサービス名のみで足りる。
 _USERNAME: str = "default"
