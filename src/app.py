@@ -73,7 +73,7 @@ class SuperWhisperApp(QObject):
     def __init__(self) -> None:
         """アプリケーションを初期化する。"""
         super().__init__()
-        logger.info("WhisperWinを初期化中...")
+        logger.info("voicekeyを初期化中...")
         self._platform = get_platform_adapter()
         
         self._setup_config()

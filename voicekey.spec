@@ -53,7 +53,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='WhisperWin',
+    name='voicekey',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -73,7 +73,7 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='WhisperWin',
+    name='voicekey',
 )
 
 # macOS 専用: メニューバー常駐アプリとして配布する .app バンドル。
@@ -81,9 +81,9 @@ coll = COLLECT(
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,
-        name='WhisperWin.app',
+        name='voicekey.app',
         icon=None,
-        bundle_identifier='com.whisperwin.app',
+        bundle_identifier='com.voicekey.app',
         info_plist={
             'LSUIElement': True,
             'NSPrincipalClass': 'NSApplication',

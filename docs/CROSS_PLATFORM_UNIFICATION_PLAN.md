@@ -1,4 +1,4 @@
-# WhisperWin Cross-Platform Unified Refactor Plan
+# Voicekey Cross-Platform Unified Refactor Plan
 
 ## 1. 目的
 - 1つのリポジトリ、1つのメインブランチ、同一コードベースで **Windows / macOS の両方を起動・運用可能** にする。
@@ -145,7 +145,7 @@ src/
   - `src/ui/system_tray.py`
   - `src/ui/styles.py`
   - `README.md`
-  - `WhisperWin.spec`
+  - `voicekey.spec`
   - `requirements.txt`
 
 ## 7. リスクと対策

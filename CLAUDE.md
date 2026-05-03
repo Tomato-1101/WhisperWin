@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WhisperWin (SuperWhisper) is a Windows desktop application for real-time speech-to-text transcription using faster-whisper. It runs as a system tray application with a Dynamic Island-style overlay UI, activated by global hotkeys.
+voicekey (SuperWhisper) is a Windows desktop application for real-time speech-to-text transcription using faster-whisper. It runs as a system tray application with a Dynamic Island-style overlay UI, activated by global hotkeys.
 
 ## Development Commands
 

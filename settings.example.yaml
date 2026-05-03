@@ -1,4 +1,4 @@
-# WhisperWin 設定ファイルのサンプル。
+# voicekey 設定ファイルのサンプル。
 # このファイルをコピーして `settings.yaml` を作成し、自分の環境に合わせて編集する。
 # `settings.yaml` は `.gitignore` で除外されるためコミットされない。
 #
