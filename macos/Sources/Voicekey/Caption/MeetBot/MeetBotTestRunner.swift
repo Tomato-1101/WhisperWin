@@ -311,6 +311,44 @@ enum MeetBotTestRunner {
         return 0
     }
 
+    /// メニューの「ボット用ブラウザで Google にログイン…」が本当に画面を出すか（`--meetbot-login-test`）
+    ///
+    /// 本番と同じ `MeetBotService.showLoginWindow()` を呼び、見える Chrome が起動して
+    /// accounts.google.com（ログイン済みなら myaccount.google.com へ流れる）が開くまでを機械判定する。
+    /// 2026-09-08 に「押しても何も出ない」と言われた経路そのものの回帰。
+    ///
+    /// - Parameter logFilePath: ログの追記先
+    /// - Returns: 終了コード（0=PASS / 1=FAIL）
+    static func runLoginTest(logFilePath: String?) async -> Int32 {
+        let writer = CaptionTestLogWriter(path: logFilePath)
+        defer { writer.close() }
+        writer.write("[INFO] meetbot-login-test 開始")
+
+        let service = await MainActor.run { MeetBotService() }
+        await MainActor.run { service.showLoginWindow() }
+        writer.write("[INFO] showLoginWindow を呼びました")
+
+        let deadline = Date().addingTimeInterval(30)
+        var found: String?
+        while Date() < deadline, found == nil {
+            if let urls = try? await ChromeDevTools.listPageURLs(port: MeetBotService.devToolsPort) {
+                found = urls.first { $0.contains("accounts.google.com") || $0.contains("myaccount.google.com") }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        let state = await MainActor.run { service.state.menuTitle }
+        writer.write("[STATE] \(state)")
+        await MainActor.run { service.shutdown() }
+
+        guard let found else {
+            writer.write("[VERDICT] status=fail reason=no-login-page")
+            return 1
+        }
+        writer.write("[URL] \(found.prefix(80))")
+        writer.write("[VERDICT] status=ok")
+        return 0
+    }
+
     /// Google にログイン済みか（アカウント切り替えのリンクや画像の有無で見る）
     private static let signedInScript = """
         (() => {

@@ -2,6 +2,20 @@
 
 voicekeyの変更履歴を記録するファイルです。
 
+## [Unreleased] - 2026-09-08
+
+### Fixed
+- **Meet 議事録ボットの「ボット用ブラウザで Google にログイン…」を押しても画面が出ないことがあるのを修正（Mac）**。
+  旧実装は「Chrome 起動 → DevTools 応答待ち → `/json/new` でタブを開く」の 3 段で、途中で止まると
+  画面に何も出ないまま黙っていた。ログイン URL を Chrome の起動引数で渡す 1 段にし、直前まで裏で動いていた
+  ヘッドレス Chrome が同じプロファイルを掴んでいれば終了を待ってから起こす（掴まれたままだと新しい Chrome は
+  URL をそちらへ渡して即終了し、見える窓が出ない）。起動後は前面に出す。操作と失敗を os.log / 行動ログに残す。
+- **未ログインで「会議に参加…」したときの案内**。Meet は未ログインだと会議ページから紹介サイトへ飛ばす
+  （実測 `/about` → `apps.google.com/meet`）ため「参加ボタンが見つからない」と出ていた。会議ページから
+  追い出されたことを `leftMeetingPageScript` で検出し、「ログインしてから参加」を状態行に出す。
+- 回帰ハーネス `--meetbot-login-test` を追加（本番と同じ `showLoginWindow()` を呼び、accounts.google.com が
+  開くまでを `[VERDICT] status=ok` で判定）。README にボットの使い方を手順で追記。
+
 ## [Unreleased] - 2026-09-03
 
 ### Fixed

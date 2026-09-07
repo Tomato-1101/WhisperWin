@@ -43,6 +43,19 @@ extension MeetBotService {
         })()
         """
 
+    /// 会議コードのページから追い出されたか
+    ///
+    /// 未ログインのプロファイルで会議 URL を開くと、Meet は `meet.google.com/` → `/about` →
+    /// `apps.google.com/meet` と紹介サイトへ飛ばす（2026-09-08 実測）。会議コードのパスに
+    /// 留まっていれば false（ゲスト参加の名前欄が出ている状態も含む）。
+    static let leftMeetingPageScript = """
+        (() => {
+            if (location.host !== 'meet.google.com') return true;
+            const path = location.pathname;
+            return path === '/' || /^\\/(about|landing)(\\/|$)/.test(path);
+        })()
+        """
+
     /// 会議に参加する
     ///
     /// 1. マイクとカメラを切る（`data-is-muted="false"` は Meet が入れている状態属性）

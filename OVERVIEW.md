@@ -101,7 +101,7 @@ Mac はメニューバー常駐、Windows はタスクトレイ常駐。文字�
 | API キー保管 | `Core/Keychain.swift` / `Config/EmbeddedKeys.generated.swift` | `utils/secrets.py` / `.env` |
 | 自動更新 | `Core/UpdaterController.swift`（Sparkle） | `utils/updater.py` |
 | ライブ字幕（personal のみ） | `Caption/`（`CaptionService` / `Audio` システム音声タップ / `Speech` 認識・読み上げ / `Translation` Apple・Gemini・Groq / `Transcript` 議事録の保存 / `Pipeline` / `UI` 字幕 HUD・メニュー・設定タブ / `CLI` 検証ハーネス） | — （Mac 専用） |
-| Meet 議事録ボット（personal のみ） | `Caption/MeetBot/`（`ChromeDevTools` CDP クライアント / `MeetBotService` 参加・字幕ポーリング・音声のローカル認識 / `CaptionSettleTracker` 伸びる字幕の確定判定 / `MeetBotScripts` **Meet の DOM 依存はここだけ** / `MeetBotMenu` / `MeetBotTestRunner` 疎通・音声・通し文字起こしのハーネス） | — （Mac 専用） |
+| Meet 議事録ボット（personal のみ） | `Caption/MeetBot/`（`ChromeDevTools` CDP クライアント / `MeetBotService` 参加・字幕ポーリング・音声のローカル認識 / `CaptionSettleTracker` 伸びる字幕の確定判定 / `MeetBotScripts` **Meet の DOM 依存はここだけ** / `MeetBotMenu` / `MeetBotTestRunner` 疎通・ログイン画面・音声・通し文字起こしのハーネス） | — （Mac 専用） |
 | ローカル文字起こし（personal のみ） | `Core/LocalSpeechTranscriber.swift`（`LiveTranscribing` 実装・認識器は `Caption/Speech/SpeechRecognizer` を共用） / `Core/Transcriber.swift`（1 発フォールバック） / `CLI/DictationTestMode.swift`（検証ハーネス） | — （Mac 専用） |
 | 翻訳して入力（personal のみ） | `Core/DictationTranslator.swift`（設定 `DictationTranslation` ＋ Apple/Groq 翻訳） / `AppController.swift`（貼り付け直前の 1 回適用） / `UI/SettingsView.swift`（「翻訳して入力」タブ） | — （Mac 専用） |
 | OS 権限 | `AppController.swift`（マイク/入力監視/アクセシビリティ） | — （Windows は OS ゲートなし） |

@@ -63,7 +63,7 @@ final class MeetBotService {
     private let logger = makeCaptionLogger("MeetBot")
 
     /// DevTools のポート（普段使いの Chrome と衝突しない値にしておく）
-    private static let devToolsPort = 9333
+    static let devToolsPort = 9333
 
     /// 会議で表示されるボットの名前（ゲスト参加のときに入力される）
     private static let botDisplayName = "voicekey 議事録ボット"
@@ -181,23 +181,57 @@ final class MeetBotService {
     ///
     /// Google のログインは本人にしかできない。ボット用プロファイルで一度ログインしておくと、
     /// 以後は自分の会議へ承認なしで入れる。
+    ///
+    /// ログイン画面は **DevTools を経由せず** URL を起動引数で渡して開く（2026-09-08）。
+    /// 以前は「Chrome 起動 → DevTools 応答待ち → `/json/new`」の 3 段だったが、
+    /// どこかで止まると**画面に何も出ないまま黙る**（メニューを押しても反応が無いように見える）。
+    /// 起動引数なら Chrome が自分で最初のタブに開くので、途中で黙る段が無い。
     func showLoginWindow() {
         guard !state.isActive else { return }
-        do {
-            chrome = try ChromeDevTools.launchChrome(
-                port: Self.devToolsPort, profileDirectory: Self.profileDirectory, headless: false
-            )
-            Task { [weak self] in
-                try? await ChromeDevTools.waitForDevTools(port: Self.devToolsPort)
-                guard let socket = try? await ChromeDevTools.openTab(
-                    url: "https://accounts.google.com/", port: Self.devToolsPort
-                ) else { return }
-                let tools = ChromeDevTools()
-                tools.connect(to: socket)
-                self?.devTools = tools
+        logger.notice("ログイン用の Chrome を開きます")
+        ActionLog.shared.write("caption.MeetBot", "ボット用ブラウザで Google のログイン画面を開く")
+        let previous = chrome
+        chrome = nil
+        devTools?.close()
+        devTools = nil
+        Task { [weak self] in
+            guard let self else { return }
+            // 直前まで裏で動いていた（見えない）Chrome が同じプロファイルを掴んだままだと、
+            // 新しく起こした Chrome はそちらへ URL を渡して即終了し、画面には何も出ない。
+            // 完全に終わるのを待ってから起こす。
+            if let previous, previous.isRunning {
+                previous.terminate()
+                let deadline = Date().addingTimeInterval(5)
+                while previous.isRunning, Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
             }
-        } catch {
-            state = .failed(String(describing: error))
+            do {
+                let process = try ChromeDevTools.launchChrome(
+                    port: Self.devToolsPort, profileDirectory: Self.profileDirectory,
+                    headless: false, initialURL: "https://accounts.google.com/"
+                )
+                self.chrome = process
+                self.logger.notice("ログイン用の Chrome を起動しました pid=\(process.processIdentifier)")
+                // Process で起こしたアプリは LaunchServices を通らないので前面に出ないことがある
+                await Self.activateChrome(pid: process.processIdentifier)
+            } catch {
+                let message = String(describing: error)
+                self.logger.error("ログイン用の Chrome を起動できません: \(message, privacy: .public)")
+                self.state = .failed("ブラウザを開けません: \(message)")
+            }
+        }
+    }
+
+    /// 起動した Chrome を前面に出す（起動直後は NSRunningApplication に載っていないので少し待つ）
+    private static func activateChrome(pid: Int32) async {
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            if let app = NSRunningApplication(processIdentifier: pid), app.isFinishedLaunching {
+                app.activate(from: .current, options: [.activateAllWindows])
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(200))
         }
     }
 
@@ -236,6 +270,15 @@ final class MeetBotService {
            let clicked = (consent as? [String: Any])?["clicked"] as? String {
             logger.notice("同意画面を閉じました: \(clicked, privacy: .public)")
             try await Task.sleep(for: .seconds(3))
+        }
+
+        // 未ログインだと Meet は会議コードのページから紹介サイトへ飛ばす（実測: /about → apps.google.com/meet）。
+        // その状態で参加ボタンを探しても「見つからない」としか言えないので、先にログインを案内する。
+        if let left = try? await tools.evaluate(Self.leftMeetingPageScript) as? Bool, left {
+            throw ChromeDevToolsError.protocolError(
+                "Google にログインしていません。メニューの「ボット用ブラウザで Google にログイン…」で"
+                + "ログインしてから、もう一度「会議に参加…」を押してください"
+            )
         }
 
         state = .joining("参加ボタンを探しています")

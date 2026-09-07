@@ -72,8 +72,11 @@ final class ChromeDevTools: @unchecked Sendable {
     ///   - port: DevTools のポート
     ///   - profileDirectory: プロファイルの置き場所
     ///   - headless: 画面に出さずに動かすか
+    ///   - initialURL: 起動と同時に開く URL（DevTools を待たずに最初のタブへ出したいとき）
     /// - Returns: 起動した Chrome のプロセス
-    static func launchChrome(port: Int, profileDirectory: URL, headless: Bool) throws -> Process {
+    static func launchChrome(
+        port: Int, profileDirectory: URL, headless: Bool, initialURL: String? = nil
+    ) throws -> Process {
         guard isChromeInstalled else { throw ChromeDevToolsError.chromeNotFound }
         try? FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
 
@@ -94,6 +97,9 @@ final class ChromeDevTools: @unchecked Sendable {
         if headless {
             // 画面に出さない。Meet は headless=new なら通常どおり動く。
             arguments.append("--headless=new")
+        }
+        if let initialURL {
+            arguments.append(initialURL)
         }
         process.arguments = arguments
         process.standardOutput = FileHandle.nullDevice
@@ -130,6 +136,13 @@ final class ChromeDevTools: @unchecked Sendable {
             throw ChromeDevToolsError.malformedResponse
         }
         return socketURL
+    }
+
+    /// 開いているページの URL 一覧（ハーネスの判定用）
+    static func listPageURLs(port: Int) async throws -> [String] {
+        let json = try await httpJSON(path: "/json", port: port)
+        guard let list = json as? [[String: Any]] else { throw ChromeDevToolsError.malformedResponse }
+        return list.filter { ($0["type"] as? String) == "page" }.compactMap { $0["url"] as? String }
     }
 
     /// DevTools の HTTP エンドポイントを叩く

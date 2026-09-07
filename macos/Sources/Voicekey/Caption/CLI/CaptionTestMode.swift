@@ -26,7 +26,7 @@ enum CaptionTestMode {
         let modes = [
             "--caption-pipeline-test", "--caption-tts-loop-test", "--caption-scope-test",
             "--caption-mic-coexist-test", "--caption-hud-test", "--caption-bench", "--caption-groq-models",
-            "--meetbot-test", "--meetbot-audio-test", "--meetbot-stt-test",
+            "--meetbot-test", "--meetbot-audio-test", "--meetbot-stt-test", "--meetbot-login-test",
         ]
         guard let mode = modes.first(where: { arguments.contains($0) }) else { return false }
 
@@ -53,6 +53,8 @@ enum CaptionTestMode {
         case "--meetbot-test":
             let url = optionValue("--meetbot-test", in: arguments)
             runAsync { await MeetBotTestRunner.run(urlString: url, logFilePath: logFilePath) }
+        case "--meetbot-login-test":
+            runAsync { await MeetBotTestRunner.runLoginTest(logFilePath: logFilePath) }
         case "--meetbot-audio-test":
             let seconds = Double(optionValue("--meetbot-audio-test", in: arguments) ?? "") ?? 10.0
             runAsync { await MeetBotTestRunner.runAudioTest(seconds: seconds, logFilePath: logFilePath) }
